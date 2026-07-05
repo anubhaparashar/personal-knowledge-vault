@@ -210,7 +210,7 @@ export default function PdfsPage({ pages, pdfs, loading, error, initialPdfId = '
           sourceDomain: '',
           relatedPageIds: [],
           notes: '',
-          storageProvider: 'google-drive',
+          provider: 'google-drive',
         }, true);
         setSelectedPdfId(pdfId);
       }
@@ -252,7 +252,7 @@ export default function PdfsPage({ pages, pdfs, loading, error, initialPdfId = '
             sourceDomain: '',
             relatedPageIds: [],
             notes: '',
-            storageProvider: 'google-drive',
+            provider: 'google-drive',
             lastDriveRefreshAt: new Date().toISOString(),
           }, true);
         }
@@ -386,7 +386,7 @@ export default function PdfsPage({ pages, pdfs, loading, error, initialPdfId = '
         <div className="pdf-library-main">
           <section className="pdf-drive-panel">
             <div>
-              <p className="eyebrow">GOOGLE DRIVE PDF STORAGE</p>
+              <p className="eyebrow">GOOGLE DRIVE PDF LIBRARY</p>
               <h2>{folder?.name || DRIVE_FOLDER_NAME}</h2>
               <p>
                 PDFs stay restricted in Google Drive. Firestore stores only metadata and the Drive file ID.
@@ -498,6 +498,7 @@ export default function PdfsPage({ pages, pdfs, loading, error, initialPdfId = '
     </AppShell>
   );
 }
+
 
 
 

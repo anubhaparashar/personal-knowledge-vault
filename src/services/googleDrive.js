@@ -189,7 +189,7 @@ export async function requestDriveAccess({ forcePrompt = false } = {}) {
         }
 
         if (!oauth2.hasGrantedAllScopes(response, DRIVE_PDF_SCOPE)) {
-          reject(new Error('Google Drive access was not granted for the required PDF scope.'));
+          reject(new Error('Google Drive access was not granted for the required Drive file scope.'));
           return;
         }
 
@@ -423,3 +423,4 @@ export function uploadFileToDrive(token, folderId, file, onProgress = () => {}, 
     xhr.send(body);
   });
 }
+
