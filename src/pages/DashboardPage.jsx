@@ -44,15 +44,8 @@ export default function DashboardPage({ pages, pdfs = [], loading, error }) {
       increment(letters, (page.title || '#').charAt(0).toUpperCase());
     });
 
-    pdfs.forEach((pdf) => {
-      (pdf.categories || []).forEach((category) => increment(categories, category));
-      (pdf.tags || []).forEach((tag) => increment(tags, tag));
-      increment(sources, pdf.sourceDomain || 'Google Drive PDFs');
-      increment(letters, (pdf.title || pdf.driveName || '#').charAt(0).toUpperCase());
-    });
-
     return { categories, tags, sources, letters };
-  }, [pages, pdfs]);
+  }, [pages]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -65,10 +58,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error }) {
     });
   }, [pages, search]);
 
-  const totalSources = new Set([
-    ...pages.filter((page) => page.sourceDomain).map((page) => page.sourceDomain),
-    ...pdfs.filter((pdf) => pdf.sourceDomain).map((pdf) => pdf.sourceDomain),
-  ]).size;
+  const totalSources = new Set(pages.filter((page) => page.sourceDomain).map((page) => page.sourceDomain)).size;
   const lockedCount = pages.filter((page) => page.secure).length;
 
   return (
@@ -77,7 +67,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error }) {
         <div>
           <p className="eyebrow">CAPTURE EVERYTHING. FIND ANYTHING.</p>
           <h2>Your private research scrapbook, diary and digital reference book.</h2>
-          <p>Paste formatted material from the web, keep private PDFs in Google Drive, preserve sources, connect related pages with <code>[[Page Title]]</code>, and read entries as a book or continuous document.</p>
+          <p>Paste formatted material from the web, keep PDFs and attachments in Google Drive, preserve sources, connect related pages with <code>[[Page Title]]</code>, and read entries as a book or continuous document.</p>
         </div>
         <div className="hero-actions">
           <a className="button primary large" href="#/edit/new">Create a page</a>

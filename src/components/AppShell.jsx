@@ -63,3 +63,4 @@ export default function AppShell({ children, title = 'My Knowledge Vault' }) {
   );
 }
 
+
