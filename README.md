@@ -1,14 +1,13 @@
 ﻿# My Knowledge Vault
 
-A private digital knowledge book for capturing web research, links, formatted notes, images, private notes, and restricted Google Drive PDFs.
+A private digital knowledge book for capturing web research, links, formatted notes, Google Drive files, and confidential text notes.
 
 ## Included features
 
 - Google login with an email allowlist
 - Rich paste editor based on Tiptap
-- Paste or upload inline images
-- Non-PDF image, text, Markdown, JSON, and Word attachments in Firebase Storage
-- PDF binary files in Google Drive, with only metadata and `driveFileId` in Firestore
+- Paste or upload inline images to Google Drive
+- PDF, image, text, Markdown, JSON, and Word attachments stored in Google Drive
 - Google Identity Services OAuth for Drive access
 - Dedicated Google Drive folder named `Personal Knowledge Vault`
 - PDF upload, folder listing, title search, in-site PDF.js viewing, Drive open, download, delete confirmation, metadata refresh, and page linking
@@ -22,21 +21,34 @@ A private digital knowledge book for capturing web research, links, formatted no
 - Per-page HTML download and browser Print / Save PDF
 - Complete JSON backup and restore for pages plus PDF metadata
 - Client-side AES-GCM encrypted secure notes
-- Firebase Firestore, Storage, Authentication, and Hosting
+- Firebase Authentication, Cloud Firestore, and Firebase Hosting
 - Responsive desktop/mobile layout and dark mode
+
+## Storage model
+
+This project does not use Firebase Cloud Storage, Cloud Functions, or any Firebase service that requires the Blaze billing plan.
+
+Uploaded PDFs, images, and attachments are uploaded directly from the browser to the signed-in user's Google Drive with the Drive `drive.file` scope. Firestore stores only file metadata:
+
+- Google Drive file ID
+- Drive view/download links
+- file name, MIME type, size, and Drive timestamps
+- provider marker and page/PDF metadata
+
+Firestore does not store file bytes. JSON backups include page records and Drive metadata, not the Drive files themselves.
 
 ## Security boundary
 
-Secure notes are encrypted in the browser before being stored in Firestore. The passphrase is not stored by this application. Secure notes intentionally do not permit images or attachments because those files are separate storage objects.
+Secure notes are encrypted in the browser before being stored in Firestore. The passphrase is not stored by this application. Secure notes intentionally do not permit images or attachments because those files are separate Google Drive objects.
 
-PDF files are private Google Drive files. The app uses the minimum Drive scope, `https://www.googleapis.com/auth/drive.file`, and does not create `Anyone with the link` permissions. Private PDFs are downloaded through the authenticated Google Drive API and passed to PDF.js as Blob/Object URLs.
+Google Drive files remain restricted in Drive unless you change their sharing settings yourself. The app uses the minimum Drive scope, `https://www.googleapis.com/auth/drive.file`, and does not create `Anyone with the link` permissions. PDFs opened inside the site are downloaded through the authenticated Google Drive API and passed to PDF.js as Blob/Object URLs.
 
 This project is a starter application, not an audited password manager. Store actual account passwords, banking passwords, recovery codes, and API secrets in a dedicated password manager.
 
 ## Requirements
 
 - Node.js 22 or newer
-- A Firebase project used only for this private application
+- A Firebase project on the Spark plan
 - A Google Cloud project with the Google Drive API enabled
 - Firebase CLI for deployment
 
@@ -46,18 +58,19 @@ This project is a starter application, not an audited password manager. Store ac
 npm install
 ```
 
-## 2. Create a Firebase project
+## 2. Create a Firebase Spark project
 
 Do not reuse a public website or blog database.
 
 In Firebase Console:
 
-1. Create a new project.
+1. Create a new project on the Spark plan.
 2. Add a Web app.
 3. Open Authentication -> Sign-in method and enable Google.
 4. Create Cloud Firestore in production mode.
-5. Create Cloud Storage for non-PDF images and document attachments.
-6. Copy the Web app configuration values.
+5. Do not create Firebase Cloud Storage.
+6. Do not add Cloud Functions.
+7. Copy the Web app configuration values.
 
 ## 3. Enable Google Drive API
 
@@ -126,22 +139,19 @@ Fill the Firebase values and these access-control/Drive values:
 
 ```env
 VITE_ALLOWED_EMAIL=your-email@gmail.com
-VITE_GOOGLE_OAUTH_CLIENT_ID=
+VITE_GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
 VITE_GOOGLE_APPROVED_EMAIL=your-email@gmail.com
 VITE_GOOGLE_DRIVE_FOLDER_ID=
 VITE_GOOGLE_API_KEY=
 ```
 
+There is no `VITE_FIREBASE_STORAGE_BUCKET` setting because this app does not use Firebase Cloud Storage.
+
 Do not commit `.env`. It is already listed in `.gitignore`. Never put real OAuth client IDs, Firebase values, or API keys in `.env.example`.
 
-## 8. Lock Firebase rules to your email
+## 8. Lock Firestore rules to your email
 
-In both files:
-
-- `firestore.rules`
-- `storage.rules`
-
-Replace:
+In `firestore.rules`, replace:
 
 ```text
 REPLACE_WITH_YOUR_EMAIL
@@ -149,7 +159,7 @@ REPLACE_WITH_YOUR_EMAIL
 
 with the exact same email used in `VITE_ALLOWED_EMAIL`.
 
-Never deploy the placeholder rules unchanged. Firestore stores page records, encrypted note payloads, PDF metadata, and Drive file IDs. Firestore never stores PDF binary files.
+Never deploy the placeholder rules unchanged. Firestore stores page records, encrypted note payloads, PDF metadata, attachment metadata, and Drive file IDs. Firestore never stores uploaded file bytes.
 
 ## 9. Run locally
 
@@ -157,7 +167,7 @@ Never deploy the placeholder rules unchanged. Firestore stores page records, enc
 npm run dev
 ```
 
-Open the local URL shown by Vite. Add `localhost` to Firebase Authentication authorized domains if it is not already present.
+Open the local URL shown by Vite. Add `localhost` to Firebase Authentication authorized domains if it is not already present. The first Drive action may open a Google consent prompt.
 
 ## 10. Test a production build
 
@@ -185,11 +195,11 @@ firebase use --add
 
 Choose the Firebase project for this vault.
 
-Deploy rules and hosting:
+Deploy Firestore rules and hosting:
 
 ```bash
 npm run build
-firebase deploy --only firestore:rules,storage,hosting
+firebase deploy --only firestore:rules,hosting
 ```
 
 ## How to use
@@ -201,7 +211,7 @@ firebase deploy --only firestore:rules,storage,hosting
 3. Paste the original URL.
 4. Add a category such as `Artificial Intelligence/LLM Agents`.
 5. Add tags separated by commas.
-6. Upload non-PDF attachments if needed.
+6. Upload images, PDFs, or other attachments. They are stored in Google Drive.
 7. Save.
 
 ### Add PDFs
@@ -221,7 +231,7 @@ Write the exact title inside double square brackets:
 This is related to [[Runtime Assurance for LLM Agents]].
 ```
 
-When that page exists, the reader creates a clickable internal link. The destination page displays the source page under Pages linking here. PDFs linked to the current page appear under Related PDFs.
+When that page exists, the reader creates a clickable internal link. The destination page displays the source page under Pages linking here.
 
 ### Create a secure note
 
@@ -234,11 +244,18 @@ The index stores only `Locked note`; title, content, category, tags, summary, an
 
 There is no passphrase recovery.
 
+## Backup and restore
+
+The JSON backup exports page records, encrypted note payloads, categories, tags, backlinks data, PDF records, and Google Drive file metadata. It does not export the actual Google Drive file bytes. Keep important Drive files in Google Drive and back them up separately when needed.
+
+Restoring a JSON backup restores links to Drive files only when those files still exist and the signed-in Google account can access them.
+
 ## Current starter limitations
 
 - Automatic categorization uses local keyword rules, not an AI API.
-- Import restores PDF metadata only. The PDF binary files must still exist in Google Drive.
-- Deleting text that references an inline image does not automatically remove the Storage object. The editor lists inline image files so they can be deleted deliberately.
+- Import restores Drive metadata only. The file bytes must still exist in Google Drive.
+- Inline Drive images use Drive-hosted links; if a browser blocks Google Drive access, open the file from the attachment link.
+- Deleting text that references an inline image does not automatically delete the Drive file. The editor lists inline image files so they can be deleted deliberately.
 - Book pagination is approximate and based on content size; very large images or code blocks may need manual page splitting in a future version.
 - Capturing an arbitrary webpage directly from its URL requires a browser extension or server-side capture service because browser CORS rules prevent reliable scraping from a static site.
 
@@ -252,6 +269,3 @@ There is no passphrase recovery.
 - Revision history
 - Two-factor reauthentication before opening the secure vault
 - Dedicated vault key wrapping and security audit
-
-
-
