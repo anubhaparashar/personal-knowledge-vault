@@ -64,6 +64,9 @@ jobs:
     needs: build
 
     steps:
+      - name: Wait for legacy Pages publish
+        run: sleep 90
+
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
