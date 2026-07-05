@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribePages } from './services/pages';
 import { subscribePdfs } from './services/pdfs';
@@ -72,7 +72,7 @@ function AuthenticatedApp() {
 
   const [section = '', id] = route;
   if (section === 'edit') return <EditorPage key={`edit-${id}`} routeId={id || 'new'} pages={pages} pagesLoaded={pagesLoaded} />;
-  if (section === 'read' && id) return <ReaderPage key={`read-${id}`} pageId={id} pages={pages} pagesLoaded={pagesLoaded} />;
+  if (section === 'read' && id) return <ReaderPage key={`read-${id}`} pageId={id} pages={pages} pdfs={pdfs} pagesLoaded={pagesLoaded} />;
   if (section === 'pdfs') return <PdfsPage pages={pages} pdfs={pdfs} loading={!pdfsLoaded} error={pdfsError} initialPdfId={id || ''} />;
   if (section === 'settings') return <SettingsPage pages={pages} pdfs={pdfs} />;
   return <DashboardPage pages={pages} pdfs={pdfs} loading={!pagesLoaded} error={pagesError || pdfsError} />;
@@ -85,5 +85,3 @@ export default function App() {
     </AuthProvider>
   );
 }
-
-

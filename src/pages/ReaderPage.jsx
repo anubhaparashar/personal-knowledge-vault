@@ -9,6 +9,7 @@ import {
   sanitizeHtml,
 } from '../utils/content';
 import { downloadPageAsHtml } from '../utils/download';
+import { driveFileKey, getDriveFileLink } from '../services/drive';
 
 export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   const page = pages.find((item) => item.id === pageId);
@@ -98,7 +99,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             <h3>Attachments</h3>
             <div className="attachment-grid">
               {page.attachments.map((item) => (
-                <a key={item.path} href={item.url} target="_blank" rel="noopener noreferrer" download>{item.name}<small>{Math.ceil(item.size / 1024)} KB</small></a>
+                <a key={driveFileKey(item)} href={getDriveFileLink(item)} target="_blank" rel="noopener noreferrer">{item.name}<small>{Math.ceil((item.size || 0) / 1024)} KB - Google Drive</small></a>
               ))}
             </div>
           </section>

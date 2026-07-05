@@ -2,9 +2,10 @@
 
 Verified on 5 July 2026 with:
 
-- Node.js 22.16.0
-- npm 10.9.2
+- Node.js via local npm environment
 - Vite 8.1.3
+- Firebase Authentication, Cloud Firestore, Firebase Hosting, and Google Drive file storage
+- No Firebase Cloud Storage configuration or deploy target
 
 Commands completed successfully:
 
@@ -13,4 +14,13 @@ npm install
 npm run build
 ```
 
-The build produced the production bundle without syntax or import errors. Vite reported only a non-blocking large-chunk optimisation warning.
+`npm install` reported 0 vulnerabilities.
+
+The build generated `dist/` with:
+
+- `dist/index.html`
+- `dist/assets/index-CCyoioCC.js`
+- `dist/assets/index-BXmR0Y5l.css`
+- `dist/assets/pdf.worker-xSiVJ7U_.mjs`
+
+Vite reported only a non-blocking large-chunk optimisation warning caused by the PDF viewer/worker bundle.

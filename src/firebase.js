@@ -1,4 +1,4 @@
-const firebaseConfig = {
+﻿const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -8,6 +8,7 @@ const firebaseConfig = {
 
 const firebaseNamespace = globalThis.firebase;
 export const isFirebaseConfigured = Boolean(firebaseNamespace) && Object.values(firebaseConfig).every(Boolean);
+export const allowedUid = (import.meta.env.VITE_ALLOWED_UID || '').trim();
 export const allowedEmail = (import.meta.env.VITE_ALLOWED_EMAIL || '').trim().toLowerCase();
 export const googleOAuthClientId = (import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || '').trim();
 export const googleApiKey = (import.meta.env.VITE_GOOGLE_API_KEY || '').trim();

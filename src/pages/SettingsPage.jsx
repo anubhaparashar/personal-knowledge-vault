@@ -1,7 +1,7 @@
 ﻿import React, { useRef, useState } from 'react';
 import AppShell from '../components/AppShell';
 import { useAuth } from '../context/AuthContext';
-import { allowedEmail } from '../firebase';
+import { allowedEmail, allowedUid } from '../firebase';
 import { importPages } from '../services/pages';
 import { importPdfs } from '../services/pdfs';
 import { downloadBackup } from '../utils/download';
@@ -52,11 +52,12 @@ export default function SettingsPage({ pages, pdfs = [] }) {
           <h2>Access control</h2>
           <dl>
             <div><dt>Signed in as</dt><dd>{user.email}</dd></div>
-            <div><dt>App allowlist</dt><dd>{allowedEmail || 'Not configured'}</dd></div>
+            <div><dt>Allowed UID</dt><dd>{allowedUid || 'Not configured'}</dd></div>
+            <div><dt>Allowed email</dt><dd>{allowedEmail || 'Not configured'}</dd></div>
             <div><dt>Stored pages</dt><dd>{pages.length}</dd></div>
             <div><dt>Drive PDFs</dt><dd>{pdfs.length}</dd></div>
           </dl>
-          <p>For production, replace <code>REPLACE_WITH_YOUR_EMAIL</code> in <code>firestore.rules</code> before deployment.</p>
+          <p>Firestore rules must use the exact UID. The frontend also checks the email and signs out anything else immediately.</p>
         </article>
 
         <article className="settings-card warning-card">

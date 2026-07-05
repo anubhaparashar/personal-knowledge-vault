@@ -1,10 +1,10 @@
-﻿# My Knowledge Vault
+# My Knowledge Vault
 
 A private digital knowledge book for capturing web research, links, formatted notes, Google Drive files, and confidential text notes.
 
 ## Included features
 
-- Google login with an email allowlist
+- Google login with a UID gate plus an email check
 - Rich paste editor based on Tiptap
 - Paste or upload inline images to Google Drive
 - PDF, image, text, Markdown, JSON, and Word attachments stored in Google Drive
@@ -28,7 +28,7 @@ A private digital knowledge book for capturing web research, links, formatted no
 
 This project does not use Firebase Cloud Storage, Cloud Functions, or any Firebase service that requires the Blaze billing plan.
 
-Uploaded PDFs, images, and attachments are uploaded directly from the browser to the signed-in user's Google Drive with the Drive `drive.file` scope. Firestore stores only file metadata:
+Uploaded PDFs, images, and attachments are uploaded directly from the browser to Google Drive with the Drive `drive.file` scope. Firestore stores only file metadata:
 
 - Google Drive file ID
 - Drive view/download links
@@ -64,12 +64,12 @@ Do not reuse a public website or blog database.
 
 In Firebase Console:
 
-1. Create a new project on the Spark plan.
+1. Create a new project.
 2. Add a Web app.
 3. Open Authentication -> Sign-in method and enable Google.
 4. Create Cloud Firestore in production mode.
-5. Do not create Firebase Cloud Storage.
-6. Do not add Cloud Functions.
+5. Firebase Cloud Storage is not used for PDFs in this app.
+6. Cloud Functions are not required for the PDF flow.
 7. Copy the Web app configuration values.
 
 ## 3. Enable Google Drive API
@@ -138,6 +138,7 @@ Copy-Item .env.example .env
 Fill the Firebase values and these access-control/Drive values:
 
 ```env
+VITE_ALLOWED_UID=your-firebase-auth-uid
 VITE_ALLOWED_EMAIL=your-email@gmail.com
 VITE_GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
 VITE_GOOGLE_APPROVED_EMAIL=your-email@gmail.com
@@ -149,15 +150,13 @@ There is no `VITE_FIREBASE_STORAGE_BUCKET` setting because this app does not use
 
 Do not commit `.env`. It is already listed in `.gitignore`. Never put real OAuth client IDs, Firebase values, or API keys in `.env.example`.
 
-## 8. Lock Firestore rules to your email
+## 8. Lock Firestore rules to your UID
 
-In `firestore.rules`, replace:
+In `firestore.rules`, set the UID literal to:
 
 ```text
-REPLACE_WITH_YOUR_EMAIL
+your-firebase-auth-uid
 ```
-
-with the exact same email used in `VITE_ALLOWED_EMAIL`.
 
 Never deploy the placeholder rules unchanged. Firestore stores page records, encrypted note payloads, PDF metadata, attachment metadata, and Drive file IDs. Firestore never stores uploaded file bytes.
 

@@ -1,10 +1,21 @@
 ﻿import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   allowedEmail,
+  allowedUid,
   auth,
   googleProvider,
   isFirebaseConfigured,
 } from '../firebase';
+
+const ACCESS_DENIED = 'Access Denied.';
+const accessMessage = (reason) => `${ACCESS_DENIED} ${reason}`;
+
+function isApprovedUser(user) {
+  if (!user) return false;
+  if (allowedUid && user.uid !== allowedUid) return false;
+  if (allowedEmail && user.email?.toLowerCase() !== allowedEmail) return false;
+  return true;
+}
 
 const AuthContext = createContext(null);
 
@@ -20,14 +31,10 @@ export function AuthProvider({ children }) {
     }
 
     return auth.onAuthStateChanged(async (nextUser) => {
-      if (
-        nextUser
-        && allowedEmail
-        && nextUser.email?.toLowerCase() !== allowedEmail
-      ) {
+      if (nextUser && !isApprovedUser(nextUser)) {
         await auth.signOut();
-        setError(`Access is restricted to ${allowedEmail}.`);
         setUser(null);
+        setError(accessMessage('This account is not approved for this vault.'));
       } else {
         setUser(nextUser);
       }
@@ -44,10 +51,9 @@ export function AuthProvider({ children }) {
     setError('');
     try {
       const result = await auth.signInWithPopup(googleProvider);
-      const email = result.user.email?.toLowerCase();
-      if (allowedEmail && email !== allowedEmail) {
+      if (!isApprovedUser(result.user)) {
         await auth.signOut();
-        throw new Error(`Access is restricted to ${allowedEmail}.`);
+        throw new Error(accessMessage('This account is not approved for this vault.'));
       }
     } catch (loginError) {
       setError(loginError.message || 'Sign-in failed.');
