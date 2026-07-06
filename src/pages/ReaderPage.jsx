@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
 import BookReader from '../components/BookReader';
+import DriveAttachmentList from '../components/DriveAttachmentList';
+import PdfViewer from '../components/PdfViewer';
 import UnlockPanel from '../components/UnlockPanel';
 import { decryptObject } from '../utils/crypto';
 import {
@@ -9,12 +11,13 @@ import {
   sanitizeHtml,
 } from '../utils/content';
 import { downloadPageAsHtml } from '../utils/download';
-import { driveFileKey, getDriveFileLink } from '../services/drive';
+import { downloadDriveFileBlob } from '../services/drive';
 
 export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   const page = pages.find((item) => item.id === pageId);
   const [decrypted, setDecrypted] = useState(null);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('kv-reader-mode') || 'scroll');
+  const [preview, setPreview] = useState(null);
 
   const content = page?.secure ? decrypted : page;
   const renderedHtml = useMemo(
@@ -37,6 +40,11 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
     [pdfs, pageId],
   );
 
+  useEffect(() => {
+    if (!preview?.url) return undefined;
+    return () => URL.revokeObjectURL(preview.url);
+  }, [preview]);
+
   function changeView(mode) {
     setViewMode(mode);
     localStorage.setItem('kv-reader-mode', mode);
@@ -45,6 +53,37 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   async function unlock(passphrase) {
     const result = await decryptObject(page.encryption, passphrase);
     setDecrypted(result);
+  }
+
+  async function openPdfInWebsite(item) {
+    try {
+      const blob = await downloadDriveFileBlob(item.driveFileId);
+      const url = URL.createObjectURL(blob);
+      setPreview({
+        fileId: item.driveFileId,
+        name: item.name || item.title || 'PDF',
+        title: item.name || item.title || 'PDF',
+        url,
+      });
+    } catch (error) {
+      window.alert(error.message);
+    }
+  }
+
+  async function downloadAttachment(item) {
+    try {
+      const blob = await downloadDriveFileBlob(item.driveFileId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = item.name || item.title || 'attachment';
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(error.message);
+    }
   }
 
   if (!pagesLoaded) {
@@ -97,11 +136,11 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
         {!page.secure && page.attachments?.length ? (
           <section className="reader-section">
             <h3>Attachments</h3>
-            <div className="attachment-grid">
-              {page.attachments.map((item) => (
-                <a key={driveFileKey(item)} href={getDriveFileLink(item)} target="_blank" rel="noopener noreferrer">{item.name}<small>{Math.ceil((item.size || 0) / 1024)} KB - Google Drive</small></a>
-              ))}
-            </div>
+            <DriveAttachmentList
+              items={page.attachments}
+              onReadPdf={openPdfInWebsite}
+              onDownload={downloadAttachment}
+            />
           </section>
         ) : null}
 
@@ -125,6 +164,35 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           ) : <p className="muted">No backlinks yet. Link to this page using <code>[[{content.title}]]</code>.</p>}
         </section>
       </article>
+      {preview ? (
+        <div className="attachment-preview-modal" role="dialog" aria-modal="true" aria-label={preview.title}>
+          <div className="attachment-preview-surface">
+            <div className="attachment-preview-head">
+              <strong>{preview.title}</strong>
+              <button type="button" className="button secondary" onClick={() => setPreview(null)}>Close</button>
+            </div>
+            <PdfViewer
+              blobUrl={preview.url}
+              title={preview.title}
+              onDownload={async () => {
+                try {
+                  const blob = await downloadDriveFileBlob(preview.fileId);
+                  const url = URL.createObjectURL(blob);
+                  const anchor = document.createElement('a');
+                  anchor.href = url;
+                  anchor.download = preview.name || 'attachment.pdf';
+                  document.body.append(anchor);
+                  anchor.click();
+                  anchor.remove();
+                  URL.revokeObjectURL(url);
+                } catch (error) {
+                  window.alert(error.message);
+                }
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

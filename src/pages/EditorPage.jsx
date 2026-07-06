@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppShell from '../components/AppShell';
 import RichEditor from '../components/RichEditor';
 import UnlockPanel from '../components/UnlockPanel';
@@ -28,6 +28,7 @@ import {
   MAX_FILE_BYTES,
   uploadDriveFile,
 } from '../services/drive';
+import PdfViewer from '../components/PdfViewer';
 import { isGoogleDriveConfigured } from '../services/googleDrive';
 
 const EMPTY_FORM = {
@@ -171,6 +172,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [uploadRows, setUploadRows] = useState([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [preview, setPreview] = useState(null);
   const [payloadWarning, setPayloadWarning] = useState('');
   const [connectionStatus, setConnectionStatus] = useState(getInitialConnectionStatus);
   const [draftPrompt, setDraftPrompt] = useState(null);
@@ -422,19 +424,6 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }
   }
 
-  async function openPdfInWebsite(item) {
-    try {
-      const blob = await downloadDriveFileBlob(item.driveFileId);
-      const url = URL.createObjectURL(blob);
-      setPreview((current) => {
-        if (current?.url) URL.revokeObjectURL(current.url);
-        return { title: item.name, url, fileId: item.driveFileId };
-      });
-    } catch (error) {
-      window.alert(error.message);
-    }
-  }
-
   async function downloadAttachment(item) {
     try {
       const blob = await downloadDriveFileBlob(item.driveFileId);
@@ -446,6 +435,21 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(error.message);
+    }
+  }
+
+  async function openPdfInWebsite(item) {
+    try {
+      const blob = await downloadDriveFileBlob(item.driveFileId);
+      const url = URL.createObjectURL(blob);
+      setPreview({
+        fileId: item.driveFileId,
+        name: item.name || 'PDF',
+        title: item.name || 'PDF',
+        url,
+      });
     } catch (error) {
       window.alert(error.message);
     }
@@ -675,14 +679,17 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
                   <h3>Attach files</h3>
                   <p>Drag files here or click to browse</p>
                 </div>
-                <button
-                  className="button primary"
-                  type="button"
-                  disabled={!canUploadFiles || saving}
-                  onClick={() => fileInput.current?.click()}
-                >
-                  Browse files
-                </button>
+                <div className="upload-panel-actions">
+                  <button
+                    className="button primary"
+                    type="button"
+                    disabled={!canUploadFiles || saving}
+                    onClick={() => fileInput.current?.click()}
+                  >
+                    Add Drive files
+                  </button>
+                  <small>25 MB per file</small>
+                </div>
               </div>
               <input ref={fileInput} type="file" accept={FILE_ACCEPT} multiple hidden onChange={handleAttachment} />
               <div className="upload-format-grid">
@@ -761,7 +768,35 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           {!isNew ? <button type="button" className="button danger full" disabled={saving} onClick={deleteCurrent}>Delete page</button> : null}
         </aside>
       </form>
+      {preview ? (
+        <div className="attachment-preview-modal" role="dialog" aria-modal="true" aria-label={preview.title}>
+          <div className="attachment-preview-surface">
+            <div className="attachment-preview-head">
+              <strong>{preview.title}</strong>
+              <button type="button" className="button secondary" onClick={() => setPreview(null)}>Close</button>
+            </div>
+            <PdfViewer
+              blobUrl={preview.url}
+              title={preview.title}
+              onDownload={async () => {
+                try {
+                  const blob = await downloadDriveFileBlob(preview.fileId);
+                  const url = URL.createObjectURL(blob);
+                  const anchor = document.createElement('a');
+                  anchor.href = url;
+                  anchor.download = preview.name || 'attachment.pdf';
+                  document.body.append(anchor);
+                  anchor.click();
+                  anchor.remove();
+                  URL.revokeObjectURL(url);
+                } catch (error) {
+                  window.alert(error.message);
+                }
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
-
