@@ -6,12 +6,12 @@ export default function LoginPage() {
 
   return (
     <main className="login-page">
-      <section className="login-card">
-        <div className="login-emblem">KV</div>
-        <p className="eyebrow">PRIVATE • INDEXED • ENCRYPTED</p>
-        <h1>My Knowledge Vault</h1>
+      <section className="login-card" aria-label="Anubha Parashar sign in">
+        <div className="login-emblem" title="Anubha Parashar">AP</div>
+        <p className="eyebrow">PRIVATE - INDEXED - ENCRYPTED</p>
+        <h1>Anubha Parashar</h1>
         <p className="login-intro">
-          Capture web research, links, images, documents and private notes in one searchable digital book.
+          A private research library for links, documents, deadlines, notes and encrypted personal references.
         </p>
 
         {isFirebaseConfigured ? (
@@ -30,8 +30,8 @@ export default function LoginPage() {
 
         {error ? <p className="form-error">{error}</p> : null}
         <div className="login-features">
-          <span>Rich paste capture</span>
-          <span>Automatic indexes</span>
+          <span>Research dashboard</span>
+          <span>Deadline reminders</span>
           <span>Book and scroll reading</span>
           <span>Encrypted secure notes</span>
         </div>

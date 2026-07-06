@@ -8,9 +8,9 @@ const BookPage = forwardRef(function BookPage({ html, number, title, cover }, re
       <div className="book-page-inner">
         {cover ? (
           <div className="cover-content">
-            <p>MY KNOWLEDGE VAULT</p>
+            <p>ANUBHA PARASHAR</p>
             <h2>{title}</h2>
-            <span>Private digital edition</span>
+            <span>Private research edition</span>
           </div>
         ) : (
           <div className="reader-prose" dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
@@ -30,8 +30,8 @@ export default function BookReader({ title, html }) {
   return (
     <div className="book-reader-wrap">
       <div className="book-controls">
-        <button className="button secondary" onClick={() => bookRef.current?.pageFlip().flipPrev()}>← Previous</button>
-        <button className="button secondary" onClick={() => bookRef.current?.pageFlip().flipNext()}>Next →</button>
+        <button className="button secondary" onClick={() => bookRef.current?.pageFlip().flipPrev()}>â† Previous</button>
+        <button className="button secondary" onClick={() => bookRef.current?.pageFlip().flipNext()}>Next â†’</button>
       </div>
       <HTMLFlipBook
         ref={bookRef}

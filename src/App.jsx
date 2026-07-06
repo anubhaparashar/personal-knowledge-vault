@@ -75,7 +75,8 @@ function AuthenticatedApp() {
   if (section === 'read' && id) return <ReaderPage key={`read-${id}`} pageId={id} pages={pages} pdfs={pdfs} pagesLoaded={pagesLoaded} />;
   if (section === 'pdfs') return <PdfsPage pages={pages} pdfs={pdfs} loading={!pdfsLoaded} error={pdfsError} initialPdfId={id || ''} />;
   if (section === 'settings') return <SettingsPage pages={pages} pdfs={pdfs} />;
-  return <DashboardPage pages={pages} pdfs={pdfs} loading={!pagesLoaded} error={pagesError || pdfsError} />;
+  const dashboardFocus = section || 'overview';
+  return <DashboardPage pages={pages} pdfs={pdfs} loading={!pagesLoaded} error={pagesError || pdfsError} focus={dashboardFocus} />;
 }
 
 export default function App() {

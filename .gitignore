@@ -12,4 +12,4 @@ serviceAccountKey.json
 *.pem
 *.key
 .DS_Store
-
+vite-dev*.log

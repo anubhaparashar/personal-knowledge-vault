@@ -48,6 +48,7 @@ const FIRESTORE_WARN_BYTES = 800 * 1024;
 const FIRESTORE_BLOCK_BYTES = 950 * 1024;
 const PAGE_TOO_LARGE_MESSAGE = 'This page is too large for one Firestore document. Split it into multiple knowledge pages.';
 const DOCUMENT_SIZE_ERROR_CODE = 'document-size-exceeded';
+const DRAFT_PRELOAD_KEY = 'kv-editor-preload';
 
 function createUploadRow(file) {
   return {
@@ -197,8 +198,26 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   useEffect(() => {
     if (isNew) {
-      setForm(EMPTY_FORM);
-      setSecure(false);
+      const preload = (() => {
+        try {
+          const raw = localStorage.getItem(DRAFT_PRELOAD_KEY);
+          if (!raw) return null;
+          localStorage.removeItem(DRAFT_PRELOAD_KEY);
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      })();
+      setForm({
+        ...EMPTY_FORM,
+        title: preload?.title || '',
+        category: preload?.category || '',
+        tagsText: preload?.tagsText || '',
+        sourceUrl: preload?.sourceUrl || '',
+        summary: preload?.summary || '',
+        html: preload?.html || '<p></p>',
+      });
+      setSecure(Boolean(preload?.secure));
       setUnlocked(true);
       setAttachments([]);
       setInlineFiles([]);

@@ -1,13 +1,14 @@
 import React from 'react';
 import {
-  driveFileKey,
-  formatDriveFileSize,
-  getDriveAttachmentKind,
-  getDriveFileLink,
-} from '../services/drive';
+  attachmentFileKey,
+  canExtractAttachment,
+  formatAttachmentSize,
+  getAttachmentKind,
+  getAttachmentOpenUrl,
+} from '../services/attachments';
 
 function AttachmentAction({ children, href, onClick, disabled, external = false }) {
-  if (href) {
+  if (href && href !== '#') {
     return (
       <a className="button secondary attachment-action" href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer noopener' : undefined}>
         {children}
@@ -27,6 +28,7 @@ export default function DriveAttachmentList({
   onReadPdf,
   onDownload,
   onRemove,
+  onExtract,
   emptyText = 'No attachments yet.',
   showActions = true,
 }) {
@@ -35,25 +37,38 @@ export default function DriveAttachmentList({
   return (
     <div className="attachment-stack">
       {items.map((item) => {
-        const kind = getDriveAttachmentKind(item);
-        const fileSize = formatDriveFileSize(item.size);
+        const kind = getAttachmentKind(item);
+        const fileSize = formatAttachmentSize(item.size);
+        const openUrl = getAttachmentOpenUrl(item);
+        const isStorage = item.provider === 'firebase-storage' || Boolean(item.storagePath);
         return (
-          <div className="attachment-row" key={driveFileKey(item)}>
+          <div className="attachment-row" key={attachmentFileKey(item)}>
             <div className="attachment-identity">
               <span className={`attachment-icon attachment-icon-${kind.key}`}>{kind.badge}</span>
               <div className="attachment-text">
-                <strong>{item.name}</strong>
-                <small>{kind.label} · {fileSize}</small>
+                <strong>{item.name || item.originalName || 'Attachment'}</strong>
+                <small>{kind.label} - {fileSize} - {isStorage ? 'Firebase Storage' : 'Google Drive'}</small>
+                {item.zipEntries?.length ? (
+                  <details className="zip-entry-list">
+                    <summary>{item.zipEntries.length} file(s) inside ZIP</summary>
+                    <ul>{item.zipEntries.map((entry) => <li key={entry.name}>{entry.name}</li>)}</ul>
+                  </details>
+                ) : null}
               </div>
             </div>
             {showActions ? (
               <div className="attachment-actions">
-                <AttachmentAction href={getDriveFileLink(item)} external>
-                  Open in Google Drive
+                <AttachmentAction href={openUrl} external>
+                  Open
                 </AttachmentAction>
                 {kind.readable && onReadPdf ? (
                   <AttachmentAction onClick={() => onReadPdf(item)}>
-                    Read PDF in website
+                    Read PDF
+                  </AttachmentAction>
+                ) : null}
+                {canExtractAttachment(item) && onExtract ? (
+                  <AttachmentAction onClick={() => onExtract(item)}>
+                    Extract content into note
                   </AttachmentAction>
                 ) : null}
                 {onDownload ? (

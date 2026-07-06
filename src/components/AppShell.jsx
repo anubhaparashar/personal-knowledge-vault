@@ -8,7 +8,7 @@ const navigation = [
   ['#/settings','Backup & Settings'],
 ];
 
-export default function AppShell({ children, title = 'My Knowledge Vault' }) {
+export default function AppShell({ children, title = 'Anubha Parashar' }) {
   const { user, logout } = useAuth();
   const [dark, setDark] = useState(() => localStorage.getItem('kv-theme') === 'dark');
 
@@ -20,11 +20,11 @@ export default function AppShell({ children, title = 'My Knowledge Vault' }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#/">
-          <span className="brand-mark">KV</span>
+        <a className="brand" href="#/" aria-label="Anubha Parashar">
+          <span className="brand-mark" title="Anubha Parashar">AP</span>
           <span>
-            <strong>Knowledge Vault</strong>
-            <small>Private digital book</small>
+            <strong>Anubha Parashar</strong>
+            <small>Private research library</small>
           </span>
         </a>
 
@@ -62,5 +62,3 @@ export default function AppShell({ children, title = 'My Knowledge Vault' }) {
     </div>
   );
 }
-
-
