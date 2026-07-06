@@ -1,4 +1,4 @@
-﻿import {
+import {
   allowedEmail,
   googleApiKey,
   googleApprovedEmail,

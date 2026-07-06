@@ -1,4 +1,4 @@
-﻿import { db, firebaseNamespace } from '../firebase';
+import { db, firebaseNamespace } from '../firebase';
 
 function pdfsCollection(uid) {
   if (!db) throw new Error('Firebase is not configured.');

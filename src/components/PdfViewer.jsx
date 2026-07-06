@@ -1,4 +1,4 @@
-﻿import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import HTMLFlipBook from 'react-pageflip';
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';

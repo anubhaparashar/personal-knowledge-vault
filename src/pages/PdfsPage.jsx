@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AppShell from '../components/AppShell';
 import PdfViewer from '../components/PdfViewer';
 import { useAuth } from '../context/AuthContext';

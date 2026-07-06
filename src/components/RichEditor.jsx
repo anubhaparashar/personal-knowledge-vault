@@ -1,4 +1,4 @@
-﻿import React, { useRef } from 'react';
+import React, { useRef } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
@@ -13,6 +13,7 @@ function ToolbarButton({ active, disabled, onClick, children, title }) {
       disabled={disabled}
       onClick={onClick}
       title={title}
+      aria-label={title}
     >
       {children}
     </button>
@@ -27,7 +28,7 @@ export default function RichEditor({ initialHtml, onChange, onImageFile, disable
       Image.configure({ allowBase64: false, inline: false }),
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
       Placeholder.configure({
-        placeholder: 'Paste text, links, lists, tables converted to text, research notes, or write your own ideasâ€¦',
+        placeholder: 'Paste text, links, lists, research notes, or write your own ideas…',
       }),
     ],
     content: initialHtml || '<p></p>',
@@ -58,7 +59,7 @@ export default function RichEditor({ initialHtml, onChange, onImageFile, disable
     },
   });
 
-  if (!editor) return <div className="editor-loading">Loading editorâ€¦</div>;
+  if (!editor) return <div className="editor-loading">Loading editor...</div>;
 
   function addLink() {
     const current = editor.getAttributes('link').href || '';
@@ -86,24 +87,21 @@ export default function RichEditor({ initialHtml, onChange, onImageFile, disable
   return (
     <section className="rich-editor-card">
       <div className="editor-toolbar" role="toolbar" aria-label="Text formatting">
-        <ToolbarButton active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold">B</ToolbarButton>
-        <ToolbarButton active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} title="Italic"><em>I</em></ToolbarButton>
-        <ToolbarButton active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} title="Strike">S</ToolbarButton>
-        <ToolbarButton active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Heading">H2</ToolbarButton>
-        <ToolbarButton active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} title="Bullet list">â€¢ List</ToolbarButton>
-        <ToolbarButton active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Numbered list">1. List</ToolbarButton>
-        <ToolbarButton active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Quote">â€œ â€</ToolbarButton>
-        <ToolbarButton active={editor.isActive('codeBlock')} onClick={() => editor.chain().focus().toggleCodeBlock().run()} title="Code block">Code</ToolbarButton>
-        <ToolbarButton active={editor.isActive('link')} onClick={addLink} title="Add link">Link</ToolbarButton>
-        <ToolbarButton disabled={disableImages} onClick={() => imageInput.current?.click()} title="Upload image to Google Drive">Image</ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} title="Undo">â†¶</ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} title="Redo">â†·</ToolbarButton>
+        <ToolbarButton active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold">Bold</ToolbarButton>
+        <ToolbarButton active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} title="Italic">Italic</ToolbarButton>
+        <ToolbarButton active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} title="Strike">Strike</ToolbarButton>
+        <ToolbarButton active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Heading">Heading</ToolbarButton>
+        <ToolbarButton active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} title="Bulleted list">Bulleted list</ToolbarButton>
+        <ToolbarButton active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Numbered list">Numbered list</ToolbarButton>
+        <ToolbarButton active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Blockquote">Blockquote</ToolbarButton>
+        <ToolbarButton active={editor.isActive('codeBlock')} onClick={() => editor.chain().focus().toggleCodeBlock().run()} title="Code">Code</ToolbarButton>
+        <ToolbarButton active={editor.isActive('link')} onClick={addLink} title="Link">Link</ToolbarButton>
+        <ToolbarButton disabled={disableImages} onClick={() => imageInput.current?.click()} title="Image">Image</ToolbarButton>
+        <ToolbarButton onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} title="Undo">Undo</ToolbarButton>
+        <ToolbarButton onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} title="Redo">Redo</ToolbarButton>
         <input ref={imageInput} type="file" accept="image/*" hidden onChange={handleImageSelection} />
       </div>
       <EditorContent editor={editor} />
     </section>
   );
 }
-
-
-

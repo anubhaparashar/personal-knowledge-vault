@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import AppShell from '../components/AppShell';
 import { useAuth } from '../context/AuthContext';
 import { allowedEmail, allowedUid } from '../firebase';

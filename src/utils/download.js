@@ -1,4 +1,4 @@
-﻿import { sanitizeHtml, timestampToDate } from './content';
+import { sanitizeHtml, timestampToDate } from './content';
 
 function downloadBlob(contents, fileName, type) {
   const blob = new Blob([contents], { type });

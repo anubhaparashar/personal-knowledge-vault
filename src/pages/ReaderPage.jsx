@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
 import BookReader from '../components/BookReader';
 import UnlockPanel from '../components/UnlockPanel';
