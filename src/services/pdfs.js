@@ -1,4 +1,5 @@
 import { db, firebaseNamespace } from '../firebase';
+import { withFirestoreWriteTimeout } from './pages';
 
 function pdfsCollection(uid) {
   if (!db) throw new Error('Firebase is not configured.');
@@ -24,11 +25,11 @@ export async function savePdf(uid, pdfId, data, isNew = false) {
     updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
   };
   if (isNew) payload.createdAt = firebaseNamespace.firestore.FieldValue.serverTimestamp();
-  await pdfsCollection(uid).doc(pdfId).set(payload, { merge: true });
+  await withFirestoreWriteTimeout(pdfsCollection(uid).doc(pdfId).set(payload, { merge: true }));
 }
 
 export async function removePdf(uid, pdfId) {
-  await pdfsCollection(uid).doc(pdfId).delete();
+  await withFirestoreWriteTimeout(pdfsCollection(uid).doc(pdfId).delete());
 }
 
 export async function importPdfs(uid, backupPdfs = []) {
@@ -36,12 +37,12 @@ export async function importPdfs(uid, backupPdfs = []) {
   for (const pdf of backupPdfs) {
     const pdfId = pdf.id || createPdfId(uid);
     const { id, createdAt, updatedAt, importedAt, ...rest } = pdf;
-    await pdfsCollection(uid).doc(pdfId).set({
+    await withFirestoreWriteTimeout(pdfsCollection(uid).doc(pdfId).set({
       ...rest,
       importedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
       createdAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    }, { merge: true }));
   }
   return backupPdfs.length;
 }

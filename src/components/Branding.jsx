@@ -21,6 +21,19 @@ const iconPaths = {
       <path d="M6 17h12l-1.2-2.2A7.5 7.5 0 0 1 16 11V9a4 4 0 1 0-8 0v2c0 .95-.22 1.88-.8 2.8L6 17Z" />
     </>
   ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 2.5v2.2" />
+      <path d="M12 19.3v2.2" />
+      <path d="M4.9 4.9l1.6 1.6" />
+      <path d="M17.5 17.5l1.6 1.6" />
+      <path d="M2.5 12h2.2" />
+      <path d="M19.3 12h2.2" />
+      <path d="M4.9 19.1l1.6-1.6" />
+      <path d="M17.5 6.5l1.6-1.6" />
+    </>
+  ),
   chevronDown: <path d="m6 9 6 6 6-6" />,
   chevronRight: <path d="m9 6 6 6-6 6" />,
   home: (
