@@ -444,7 +444,7 @@ progress { width: 100%; margin-top: 12px; }
 .save-action-row { display: grid; gap: 10px; }
 .save-warning-panel { border: 1px solid rgba(161,92,0,.24); background: rgba(214,157,61,.13); color: #7a4d00; font-weight: 800; }
 .save-error-panel { border: 1px solid rgba(180,35,24,.28); background: rgba(180,35,24,.08); color: var(--danger); font-weight: 800; }
-/* Quick Capture upload and layout refinements */
+/* Capture upload and layout refinements */
 html, body, #root { width: 100%; max-width: 100%; overflow-x: hidden; }
 .app-shell, .main-area, .content-area, .topbar, .editor-layout, .editor-main, .editor-meta { min-width: 0; max-width: 100%; }
 .sidebar { width: 270px; min-width: 0; }
@@ -2134,4 +2134,14 @@ a { color: inherit; }
   .month-weekdays span { font-size: 0.68rem; padding: 0.45rem 0.2rem; }
   .calendar-date-button span { min-width: 24px; height: 24px; }
   .details-actions .text-link { min-height: 34px; }
+}
+/* Final cascade guard for responsive header controls. */
+.topbar .mobile-menu-button { display: none; }
+@media (max-width: 1023px) {
+  .topbar .mobile-menu-button { display: inline-grid; }
+}
+.deadline-panel { scroll-margin-top: 24px; }
+.deadline-panel .empty-state { min-height: 280px; }
+@media (max-width: 640px) {
+  .deadline-panel .empty-state { min-height: 220px; }
 }

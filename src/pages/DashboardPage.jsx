@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   Bell,
-  Calendar,
   CalendarClock,
   ChevronRight,
   ClipboardCheck,
@@ -26,7 +25,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
-import { MiniCalendar, TimelineView, UpcomingDatesWidget, requestCalendarAdd } from '../components/ResearchCalendar';
+import { requestCalendarAdd } from '../components/ResearchCalendar';
 import {
   Badge,
   EmptyState,
@@ -42,7 +41,7 @@ import { useAuth } from '../context/AuthContext';
 import { removePage } from '../services/pages';
 import { formatDate } from '../utils/content';
 import { daysUntilDate, formatDetectedDate, isCalendarImportantDate, selectNextImportantDate } from '../utils/dates';
-import { buildResearchDateEvents, dateTypeGroup, formatDateShort, getEventsByDate, sortResearchPages, statusLabel, todayIso } from '../utils/researchDates';
+import { buildResearchDateEvents, sortResearchPages } from '../utils/researchDates';
 
 const LIBRARY_VIEW_KEY = 'aprv-library-view';
 const LIBRARY_SEARCH_KEY = 'kv-global-search';
@@ -63,7 +62,29 @@ const WORKSPACE_CARDS = [
 ];
 
 const DEADLINE_SCOPE_FILTERS = ['All', 'Scholarships', 'Postdoctoral', 'Conferences', 'Journals', 'Jobs/Fellowships'];
-const DEADLINE_TIME_FILTERS = ['Due in 7 days', 'Due in 30 days', 'Due in 90 days', 'Overdue', 'Completed', 'No deadline detected'];
+const DEADLINE_TIME_FILTERS = ['Due in 7 days', 'Due in 30 days', 'Due in 90 days', 'Overdue', 'Completed', 'No deadline recorded'];
+const FOCUS_LABELS = {
+  overview: 'Research Library',
+  notes: 'All Notes',
+  calendar: 'Research Calendar',
+  deadlines: 'Upcoming Deadlines',
+  applications: 'Applications',
+  ideas: 'Paper Ideas',
+  papers: 'Research Papers',
+  literature: 'Literature Notes',
+  projects: 'Research Projects',
+  scholarships: 'Scholarships',
+  postdoctoral: 'Postdoctoral Opportunities',
+  fellowships: 'Fellowships',
+  grants: 'Grants',
+  conferences: 'Conferences',
+  journals: 'Journals',
+  'special-issues': 'Special Issues',
+  'submission-deadlines': 'Submission Deadlines',
+  diary: 'Diary',
+  'general-notes': 'General Notes',
+  books: 'Books and Reading',
+};
 
 function readSessionSet(key) {
   try { return new Set(JSON.parse(sessionStorage.getItem(key) || '[]')); } catch { return new Set(); }
@@ -78,15 +99,7 @@ function saveSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify([...value])); } catch {}
 }
 function normalize(value = '') { return String(value).toLowerCase(); }
-function daysUntil(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  date.setHours(0, 0, 0, 0);
-  return Math.round((date.getTime() - today.getTime()) / 86400000);
-}
+function sortByUpdated(a, b) { return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0); }
 function statusForDays(days) {
   if (days == null) return 'Upcoming';
   if (days < 0) return 'Overdue';
@@ -108,6 +121,19 @@ function categoryCount(page, card) {
   const source = normalize(summarizeText(page));
   return card.terms.some((term) => source.includes(term));
 }
+function focusMatchesPage(page, focus) {
+  if (!focus || focus === 'overview' || focus === 'notes' || focus === 'calendar') return true;
+  if (focus === 'deadlines' || focus === 'submission-deadlines') return Boolean(selectNextImportantDate(page.importantDates || [], { includeOverdue: true }));
+  if (focus === 'literature') return normalize(summarizeText(page)).includes('literature') || normalize(summarizeText(page)).includes('reading note');
+  if (focus === 'projects') return normalize(summarizeText(page)).includes('project');
+  if (focus === 'grants') return normalize(summarizeText(page)).includes('grant');
+  if (focus === 'special-issues') return normalize(summarizeText(page)).includes('special issue');
+  if (focus === 'diary') return normalize(summarizeText(page)).includes('diary');
+  if (focus === 'general-notes') return normalize(summarizeText(page)).includes('general note');
+  if (focus === 'books') return normalize(summarizeText(page)).includes('book') || normalize(summarizeText(page)).includes('reading');
+  const card = WORKSPACE_CARDS.find((item) => item.href === `#/${focus}`);
+  return card ? categoryCount(page, card) : true;
+}
 function deadlineMatchesScope(item, filter) {
   const source = normalize([item.deadline?.type, item.page.category, item.page.title, item.page.summary, ...(item.page.tags || [])].filter(Boolean).join(' '));
   if (filter === 'All') return true;
@@ -119,7 +145,7 @@ function deadlineMatchesScope(item, filter) {
   return true;
 }
 function deadlineMatchesTime(item, filter) {
-  if (!filter) return true;
+  if (!filter || filter === 'No deadline recorded') return true;
   if (filter === 'Due in 7 days') return item.days != null && item.days >= 0 && item.days <= 7;
   if (filter === 'Due in 30 days') return item.days != null && item.days >= 0 && item.days <= 30;
   if (filter === 'Due in 90 days') return item.days != null && item.days >= 0 && item.days <= 90;
@@ -127,7 +153,6 @@ function deadlineMatchesTime(item, filter) {
   if (filter === 'Completed') return item.status === 'Completed';
   return true;
 }
-function sortByUpdated(a, b) { return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0); }
 function daysRemainingLabel(days) {
   if (days == null) return 'Needs confirmation';
   if (days < 0) return `${Math.abs(days)} days overdue`;
@@ -151,11 +176,9 @@ function filterLabel(value) {
   if (value.startsWith('deadline:')) return value.replace('deadline:', 'Deadline: ');
   return 'All';
 }
-function deadlineDaysLabel(item) {
-  if (item.days == null) return 'Unknown';
-  if (item.days < 0) return `${Math.abs(item.days)} days late`;
-  if (item.days === 0) return 'Today';
-  return `${item.days} days`;
+function openEditorWithPreload(payload) {
+  localStorage.setItem(PRELOAD_KEY, JSON.stringify(payload));
+  window.location.hash = '#/edit/new';
 }
 
 function NoteAction({ icon: Icon, children, onClick, danger = false }) {
@@ -181,9 +204,6 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const [archivedIds, setArchivedIds] = useState(() => readSet(ARCHIVED_KEY));
   const [dismissedReminders, setDismissedReminders] = useState(() => readSessionSet(REMINDER_DISMISS_KEY));
   const [notificationMessage, setNotificationMessage] = useState('');
-  const [showCreatedDates, setShowCreatedDates] = useState(false);
-  const [showUpdatedDates, setShowUpdatedDates] = useState(false);
-  const [dashboardSelectedDate, setDashboardSelectedDate] = useState(() => todayIso());
 
   useEffect(() => { localStorage.setItem(LIBRARY_SEARCH_KEY, search); }, [search]);
   useEffect(() => { localStorage.setItem(LIBRARY_VIEW_KEY, viewMode); }, [viewMode]);
@@ -192,6 +212,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   useEffect(() => { saveSet(ARCHIVED_KEY, archivedIds); }, [archivedIds]);
 
   const activePages = useMemo(() => pages.filter((page) => !archivedIds.has(page.id)), [archivedIds, pages]);
+  const researchEvents = useMemo(() => buildResearchDateEvents(activePages, { includeDerived: true }), [activePages]);
 
   const deadlines = useMemo(() => activePages
     .flatMap((page) => (page.importantDates || [])
@@ -252,31 +273,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const recent = useMemo(() => [...activePages].sort(sortByUpdated).slice(0, 6), [activePages]);
   const pagesWithoutDeadlines = useMemo(() => activePages.filter((page) => !page.secure && !selectNextImportantDate(page.importantDates || [], { includeOverdue: true })), [activePages]);
   const visibleReminders = useMemo(() => deadlines.filter((item) => ['Overdue', 'Due today', 'Due soon'].includes(item.status) && !item.deadline?.completed && !dismissedReminders.has(item.id)), [deadlines, dismissedReminders]);
-
   const filteredDeadlines = useMemo(() => deadlines.filter((item) => deadlineMatchesScope(item, deadlineScopeFilter) && deadlineMatchesTime(item, deadlineTimeFilter)), [deadlines, deadlineScopeFilter, deadlineTimeFilter]);
-  const calendarEvents = useMemo(() => buildResearchDateEvents(activePages, { includeDerived: true })
-    .filter((event) => {
-      if (event.type === 'Created date') return showCreatedDates;
-      if (event.type === 'Updated date') return showUpdatedDates;
-      if (event.type === 'Publication date') return false;
-      return true;
-    }), [activePages, showCreatedDates, showUpdatedDates]);
-
-  const calendarGroups = useMemo(() => {
-    const grouped = getEventsByDate(calendarEvents);
-    return [...grouped.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(0, 14)
-      .map(([date, events]) => ({
-        date,
-        groups: [...events].reduce((map, event) => {
-          const key = event.type === 'Created date' ? 'Notes created' : event.type === 'Updated date' ? 'Notes updated' : dateTypeGroup(event.type);
-          if (!map.has(key)) map.set(key, []);
-          map.get(key).push(event);
-          return map;
-        }, new Map()),
-      }));
-  }, [calendarEvents]);
 
   const filterOptions = useMemo(() => {
     const items = [{ value: 'all', label: 'All filters' }];
@@ -305,9 +302,8 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
 
   const filteredPages = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const focusCard = WORKSPACE_CARDS.find((card) => card.href === `#/${focus}`);
     let items = activePages.filter((page) => {
-      if (focusCard && !categoryCount(page, focusCard)) return false;
+      if (!focusMatchesPage(page, focus)) return false;
       if (filterValue.startsWith('category:') && normalize(page.secure ? 'Private Vault' : (page.category || 'Uncategorised')) !== normalize(filterValue.slice(9))) return false;
       if (filterValue.startsWith('tag:') && !(page.tags || []).map(normalize).includes(normalize(filterValue.slice(4)))) return false;
       const deadline = primaryDates.get(page.id);
@@ -318,14 +314,16 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
       return true;
     });
 
-    items = sortResearchPages(items, calendarEvents, sortMode);
-
+    items = sortResearchPages(items, researchEvents, sortMode);
     return [...items].sort((a, b) => (pinnedIds.has(a.id) === pinnedIds.has(b.id) ? 0 : pinnedIds.has(a.id) ? -1 : 1));
-  }, [activePages, calendarEvents, filterValue, focus, pinnedIds, primaryDates, search, searchScope, sortMode]);
+  }, [activePages, filterValue, focus, pinnedIds, primaryDates, researchEvents, search, searchScope, sortMode]);
 
-  const focusLabel = {
-    overview: 'Research Library', notes: 'All Notes', calendar: 'Research Calendar', deadlines: 'Upcoming Deadlines', applications: 'Applications', ideas: 'Paper Ideas', papers: 'Research Papers', literature: 'Literature Notes', projects: 'Research Projects', scholarships: 'Scholarships', postdoctoral: 'Postdoctoral Opportunities', fellowships: 'Fellowships', grants: 'Grants', conferences: 'Conferences', journals: 'Journals', 'special-issues': 'Special Issues', 'submission-deadlines': 'Submission Deadlines', diary: 'Diary', 'general-notes': 'General Notes', books: 'Books and Reading',
-  }[focus] || 'Research Library';
+  const focusLabel = FOCUS_LABELS[focus] || 'Research Library';
+  const deadlineScopeOptions = DEADLINE_SCOPE_FILTERS.map((label) => ({ label, value: label }));
+  const deadlineTimeOptions = DEADLINE_TIME_FILTERS.map((label) => ({ label, value: label }));
+  const noDeadlineMode = deadlineTimeFilter === 'No deadline recorded';
+  const deadlineRows = noDeadlineMode ? [] : filteredDeadlines.slice(0, 10);
+  const noDeadlineRows = noDeadlineMode ? pagesWithoutDeadlines.slice(0, 10) : [];
 
   function dismissReminder(id) {
     const next = new Set(dismissedReminders);
@@ -363,44 +361,15 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     const payload = page.secure
       ? { title: `${page.title || 'Locked note'} copy`, category: page.category || 'Private Vault', tagsText: (page.tags || []).join(', '), sourceUrl: '', summary: '', html: '<p></p>', secure: false }
       : { title: `${page.title || 'Untitled'} copy`, category: page.category || 'Uncategorised', tagsText: (page.tags || []).join(', '), sourceUrl: page.sourceUrl || '', summary: page.summary || '', html: page.html || '<p></p>', secure: false };
-    localStorage.setItem(PRELOAD_KEY, JSON.stringify(payload));
-    window.location.hash = '#/edit/new';
+    openEditorWithPreload(payload);
   }
   async function deletePage(page) {
     if (!window.confirm(`Delete "${page.title || 'this note'}" permanently?`)) return;
     await removePage(user.uid, page.id);
   }
 
-  function renderCalendarEvent(event) {
-    return (
-      <a key={event.id} className="calendar-event-row" href={`#/read/${event.pageId}`}>
-        <span>
-          <strong>{event.pageTitle}</strong>
-          <small>{event.title || event.type}</small>
-        </span>
-        <Badge tone={event.status}>{statusLabel(event.status)}</Badge>
-      </a>
-    );
-  }
-  const deadlineScopeOptions = DEADLINE_SCOPE_FILTERS.map((label) => ({ label, value: label }));
-  const deadlineTimeOptions = DEADLINE_TIME_FILTERS.map((label) => ({ label, value: label }));
-  const deadlineRows = deadlineTimeFilter === 'No deadline detected' ? [] : filteredDeadlines.slice(0, 10);
-  const noDeadlineRows = deadlineTimeFilter === 'No deadline detected' ? pagesWithoutDeadlines.slice(0, 10) : [];
-  const dashboardEventsByDate = useMemo(() => getEventsByDate(calendarEvents), [calendarEvents]);
-  const selectedDashboardEvents = dashboardEventsByDate.get(dashboardSelectedDate) || [];
-  const dashboardTimelineEvents = selectedDashboardEvents.length ? selectedDashboardEvents : calendarEvents.filter((event) => !event.isDerived).slice(0, 6);
-  const contextPanel = (
-    <div className="context-stack calendar-dashboard-context">
-      <MiniCalendar events={calendarEvents} selectedDate={dashboardSelectedDate} onSelectDate={setDashboardSelectedDate} />
-      <section className="context-card compact-date-context">
-        <div className="context-head"><span>Selected date</span><Calendar size={18} /></div>
-        <TimelineView compact events={dashboardTimelineEvents} onOpenEvent={(event) => { window.location.hash = `#/read/${event.pageId}`; }} />
-      </section>
-    </div>
-  );
-
   return (
-    <AppShell title={focusLabel} contextPanel={contextPanel}>
+    <AppShell title={focusLabel}>
       <div className="dashboard-stack">
         {error ? <div className="alert-panel error"><strong>Library sync issue</strong><span>{error}</span></div> : null}
         {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
@@ -429,34 +398,68 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
         </section>
 
         <SectionPanel
-          className="research-calendar-panel"
-          eyebrow="RESEARCH CALENDAR"
-          title="Date-wise Research Calendar"
-          actions={(
-            <div className="calendar-toggle-row">
-              <label><input type="checkbox" checked={showCreatedDates} onChange={(event) => setShowCreatedDates(event.target.checked)} /> Show created dates</label>
-              <label><input type="checkbox" checked={showUpdatedDates} onChange={(event) => setShowUpdatedDates(event.target.checked)} /> Show updated dates</label>
-            </div>
-          )}
+          className="deadline-panel"
+          eyebrow="DEADLINES"
+          title="Upcoming Deadlines"
+          actions={<PrimaryButton onClick={requestCalendarAdd}><Plus size={17} /> Add Deadline</PrimaryButton>}
         >
-          {calendarGroups.length ? (
-            <div className="calendar-date-list">
-              {calendarGroups.map(({ date, groups }) => (
-                <article key={date} className="calendar-date-card">
-                  <div className="calendar-date-block"><Calendar size={18} /><strong>{formatDateShort(date)}</strong></div>
-                  <div className="calendar-date-groups">
-                    {[...groups.entries()].map(([group, events]) => (
-                      <section key={group}>
-                        <h3>{group}</h3>
-                        {events.map(renderCalendarEvent)}
-                      </section>
-                    ))}
-                  </div>
-                </article>
+          <div className="deadline-filter-stack">
+            <SegmentedControl ariaLabel="Deadline category filters" options={deadlineScopeOptions} value={deadlineScopeFilter} onChange={setDeadlineScopeFilter} />
+            <SegmentedControl ariaLabel="Deadline time filters" className="compact" options={deadlineTimeOptions} value={deadlineTimeFilter} onChange={setDeadlineTimeFilter} />
+          </div>
+
+          {deadlineRows.length ? (
+            <div className="deadline-list" aria-label="Upcoming deadline list">
+              {deadlineRows.map((item) => (
+                <a key={item.id} className={`deadline-row ${deadlineTone(item.status)}`} href={`#/read/${item.page.id}`}>
+                  <span className="deadline-row-icon"><CalendarClock size={18} strokeWidth={1.8} /></span>
+                  <span className="deadline-row-main">
+                    <strong>{item.page.secure ? 'Locked note' : item.page.title}</strong>
+                    <small>{item.page.category || 'Uncategorised'} - {item.kind}</small>
+                  </span>
+                  <span className="deadline-row-date">{formatDetectedDate(item.deadline)}</span>
+                  <Badge tone={deadlineTone(item.status)}>{item.status}</Badge>
+                  <span className="deadline-row-days">{daysRemainingLabel(item.days)}</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </a>
               ))}
             </div>
-          ) : <EmptyState icon={CalendarClock} title="No calendar dates yet" compact>No detected deadlines, events or reminders are available for this view.</EmptyState>}
+          ) : null}
+
+          {noDeadlineRows.length ? (
+            <div className="deadline-list" aria-label="Entries without deadlines">
+              {noDeadlineRows.map((page) => (
+                <a key={page.id} className="deadline-row no-deadline" href={`#/read/${page.id}`}>
+                  <span className="deadline-row-icon"><FileText size={18} strokeWidth={1.8} /></span>
+                  <span className="deadline-row-main">
+                    <strong>{page.secure ? 'Locked note' : page.title}</strong>
+                    <small>{page.category || 'Uncategorised'}</small>
+                  </span>
+                  <span className="deadline-row-date">No deadline recorded</span>
+                  <Badge>No date</Badge>
+                  <span className="deadline-row-days">Add one</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </a>
+              ))}
+            </div>
+          ) : null}
+
+          {!deadlineRows.length && !noDeadlineRows.length ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="No upcoming deadlines"
+              actions={(
+                <>
+                  <SecondaryButton as="a" href="#/edit/new"><Link2 size={16} /> Import Opportunity</SecondaryButton>
+                  <PrimaryButton onClick={requestCalendarAdd}><Plus size={17} /> Add Manually</PrimaryButton>
+                </>
+              )}
+            >
+              Import a scholarship, postdoctoral opening, conference call or journal opportunity to begin tracking important dates.
+            </EmptyState>
+          ) : null}
         </SectionPanel>
+
         <section className="workspace-section" aria-labelledby="workspace-title">
           <div className="section-title-row">
             <div>
@@ -468,8 +471,6 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
             {WORKSPACE_CARDS.map((card) => <WorkspaceCard key={card.key} {...card} title={card.label} count={workspaceCounts.get(card.key) || 0} />)}
           </div>
         </section>
-
-        <UpcomingDatesWidget events={calendarEvents} onAddDate={() => requestCalendarAdd()} />
 
         <SectionPanel eyebrow="NOTE LIBRARY" title="Research Notes" actions={<Badge>{filteredPages.length} shown</Badge>}>
           <SearchToolbar
@@ -511,10 +512,10 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
                   {deadline ? (
                     <div className="note-next-date">
                       <CalendarClock size={15} />
-                      <span><strong>Next important date</strong>{deadline.kind} ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {formatDetectedDate(deadline.deadline)}</span>
+                      <span><strong>Next important date</strong>{deadline.kind} - {formatDetectedDate(deadline.deadline)}</span>
                       <small>{daysRemainingLabel(deadline.days)}</small>
                     </div>
-                  ) : <div className="note-next-date subtle"><span>No deadline detected</span></div>}
+                  ) : <div className="note-next-date subtle"><span>No deadline recorded</span></div>}
                   <div className="note-card-foot">
                     <small>Updated {formatDate(page.updatedAt)}</small>
                     <div className="note-actions">
