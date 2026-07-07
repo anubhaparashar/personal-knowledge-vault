@@ -6,6 +6,8 @@ import {
   uploadFileToDrive,
 } from './googleDrive';
 
+export { driveWebUrl, requestDriveAccess, resolveDriveFolder, uploadFileToDrive };
+
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 function driveInlineLink(fileId) {

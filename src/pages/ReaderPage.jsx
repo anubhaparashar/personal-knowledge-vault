@@ -11,7 +11,29 @@ import {
   sanitizeHtml,
 } from '../utils/content';
 import { downloadPageAsHtml } from '../utils/download';
-import { downloadDriveFileBlob } from '../services/drive';
+import { downloadAttachmentBlob } from '../services/attachments';
+import { daysUntil, deadlineStatus } from '../utils/intelligence';
+import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
+import { formatDetectedDate } from '../utils/dates';
+
+function deadlineLabel(deadline) {
+  const status = deadlineStatus(deadline);
+  const days = daysUntil(deadline.date);
+  if (deadline.uncertain && !deadline.confirmed) return 'Needs confirmation';
+  if (status === 'Completed') return 'Completed';
+  if (status === 'Overdue') return `Overdue by ${Math.abs(days || 0)} day(s)`;
+  if (status === 'Today') return 'Due today';
+  if (status === 'Due soon') return `Due in ${days} day(s)`;
+  if (status === 'Upcoming') return `Due in ${days} day(s)`;
+  return 'Detected automatically';
+}
+
+function dateSourceLabel(deadline) {
+  if (deadline.uncertain && !deadline.confirmed) return 'Needs confirmation';
+  if (deadline.source === 'manual' || deadline.manuallyEdited) return 'Added manually';
+  if (deadline.detectedAutomatically || deadline.source === 'automatic') return 'Detected automatically';
+  return 'Saved date';
+}
 
 export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   const page = pages.find((item) => item.id === pageId);
@@ -57,10 +79,10 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
 
   async function openPdfInWebsite(item) {
     try {
-      const blob = await downloadDriveFileBlob(item.driveFileId);
+      const blob = await downloadAttachmentBlob(item);
       const url = URL.createObjectURL(blob);
       setPreview({
-        fileId: item.driveFileId,
+        item,
         name: item.name || item.title || 'PDF',
         title: item.name || item.title || 'PDF',
         url,
@@ -72,7 +94,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
 
   async function downloadAttachment(item) {
     try {
-      const blob = await downloadDriveFileBlob(item.driveFileId);
+      const blob = await downloadAttachmentBlob(item);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -84,6 +106,34 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
     } catch (error) {
       window.alert(error.message);
     }
+  }
+
+  function renderImportantDates() {
+    const dates = content?.importantDates || [];
+    if (!dates.length) return null;
+    const pageForCalendar = { ...page, ...content, id: page.id };
+    return (
+      <section className="reader-section important-dates-read">
+        <h3>Important dates</h3>
+        <div className="deadline-table reader-deadline-table">
+          {dates.map((deadline) => {
+            const status = deadlineStatus(deadline);
+            return (
+              <article key={deadline.id || `${deadline.type}-${deadline.date}`} className={`deadline-row ${status.toLowerCase().replace(/\s+/g, '-')}`}>
+                <div>
+                  <strong>{deadline.type || 'Deadline'}</strong>
+                  <span>{deadline.snippet || dateSourceLabel(deadline)}</span>
+                </div>
+                <time dateTime={deadline.date || undefined}>{formatDetectedDate(deadline)}</time>
+                <span>{deadlineLabel(deadline)}</span>
+                {deadline.date ? <a className="text-link" href={googleCalendarUrl(deadline, pageForCalendar)} target="_blank" rel="noreferrer">Add to Google Calendar</a> : null}
+                {deadline.date ? <button type="button" className="text-link" onClick={() => downloadIcs(deadline, pageForCalendar)}>Download .ics</button> : null}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
   }
 
   if (!pagesLoaded) {
@@ -133,6 +183,8 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           <BookReader title={content.title} html={renderedHtml} />
         )}
 
+        {renderImportantDates()}
+
         {!page.secure && page.attachments?.length ? (
           <section className="reader-section">
             <h3>Attachments</h3>
@@ -174,21 +226,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             <PdfViewer
               blobUrl={preview.url}
               title={preview.title}
-              onDownload={async () => {
-                try {
-                  const blob = await downloadDriveFileBlob(preview.fileId);
-                  const url = URL.createObjectURL(blob);
-                  const anchor = document.createElement('a');
-                  anchor.href = url;
-                  anchor.download = preview.name || 'attachment.pdf';
-                  document.body.append(anchor);
-                  anchor.click();
-                  anchor.remove();
-                  URL.revokeObjectURL(url);
-                } catch (error) {
-                  window.alert(error.message);
-                }
-              }}
+              onDownload={() => downloadAttachment(preview.item)}
             />
           </div>
         </div>

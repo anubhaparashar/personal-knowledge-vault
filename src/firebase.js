@@ -34,7 +34,9 @@ if (isFirebaseConfigured) {
     : firebaseNamespace.initializeApp(firebaseConfig);
   auth = app.auth();
   db = app.firestore();
-  if (firebaseNamespace.storage) {
+  if (!configuredStorageBucket) {
+    storageError = 'Firebase Storage bucket is not configured. Set VITE_FIREBASE_STORAGE_BUCKET.';
+  } else if (firebaseNamespace.storage) {
     try {
       storage = app.storage();
     } catch (error) {
@@ -51,5 +53,5 @@ if (isFirebaseConfigured) {
   });
 }
 
-export const isStorageConfigured = Boolean(storage);
+export const isStorageConfigured = Boolean(storage && configuredStorageBucket);
 export { app, auth, db, storage, storageError, googleProvider, firebaseNamespace };

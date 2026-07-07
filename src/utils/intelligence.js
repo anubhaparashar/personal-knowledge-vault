@@ -1,4 +1,5 @@
 import { getSourceDomain, htmlToText } from './content';
+import { extractImportantDates } from './dates';
 
 export const CATEGORY_OPTIONS = [
   'Research Opportunities/Scholarships',
@@ -158,36 +159,6 @@ export function summarizeText(text = '', fallback = '') {
   return (sentence || clean).slice(0, 320);
 }
 
-const MONTHS = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
-const DATE_PATTERN = `(?:\\b\\d{4}-\\d{1,2}-\\d{1,2}\\b|\\b(?:${MONTHS})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,)?\\s+\\d{4}\\b|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTHS})(?:,)?\\s+\\d{4}\\b|\\b\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b)`;
-const DATE_REGEX = new RegExp(DATE_PATTERN, 'gi');
-const CONTEXT_REGEX = new RegExp(`((?:application|scholarship|postdoctoral|abstract|full paper|paper|submission|camera[- ]ready|registration|notification|interview|fellowship|closing|deadline|start|expected start)[^\\n.]{0,90})(${DATE_PATTERN})`, 'gi');
-
-function parseDate(value) {
-  const raw = value.replace(/(st|nd|rd|th)/gi, '').replace(/-/g, '-').trim();
-  const slash = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-  const uncertain = Boolean(slash && Number(slash[1]) <= 12 && Number(slash[2]) <= 12);
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return { iso: parsed.toISOString().slice(0, 10), uncertain };
-}
-
-function classifyDeadlineType(context = '') {
-  const value = context.toLowerCase();
-  if (value.includes('abstract')) return 'Abstract submission deadline';
-  if (value.includes('camera')) return 'Camera-ready deadline';
-  if (value.includes('registration')) return 'Registration deadline';
-  if (value.includes('notification')) return 'Notification date';
-  if (value.includes('interview')) return 'Interview date';
-  if (value.includes('scholarship')) return 'Scholarship deadline';
-  if (value.includes('postdoctoral')) return 'Postdoctoral application deadline';
-  if (value.includes('fellowship') || value.includes('closing')) return 'Fellowship closing date';
-  if (value.includes('start')) return 'Expected start date';
-  if (value.includes('full paper') || value.includes('paper')) return 'Full paper submission deadline';
-  if (value.includes('application')) return 'Application deadline';
-  return 'Deadline';
-}
-
 export function deadlineStatus(deadline) {
   if (deadline.completed) return 'Completed';
   if (!deadline.date) return 'Unconfirmed';
@@ -210,69 +181,29 @@ export function daysUntil(dateValue) {
   return Math.ceil((date - today) / 86400000);
 }
 
-export function detectImportantDates(text = '') {
-  const clean = normalizeText(text);
-  const matches = [];
-  const seen = new Set();
-  let match;
-
-  while ((match = CONTEXT_REGEX.exec(clean)) !== null) {
-    const parsed = parseDate(match[2]);
-    if (!parsed) continue;
-    const snippet = `${match[1]}${match[2]}`.trim().slice(0, 220);
-    const key = `${parsed.iso}:${classifyDeadlineType(match[1])}:${snippet.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    matches.push({
-      id: crypto.randomUUID(),
-      type: classifyDeadlineType(match[1]),
-      date: parsed.iso,
-      time: '',
-      timeZone: '',
-      snippet,
-      uncertain: parsed.uncertain,
-      confirmed: !parsed.uncertain,
-      completed: false,
-      reminder: { inApp: true, browser: false },
-    });
-  }
-
-  if (!matches.length) {
-    while ((match = DATE_REGEX.exec(clean)) !== null) {
-      const parsed = parseDate(match[0]);
-      if (!parsed) continue;
-      const start = Math.max(0, match.index - 70);
-      const snippet = clean.slice(start, match.index + match[0].length + 70).trim();
-      const key = `${parsed.iso}:${snippet.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      matches.push({
-        id: crypto.randomUUID(),
-        type: 'Detected date',
-        date: parsed.iso,
-        time: '',
-        timeZone: '',
-        snippet,
-        uncertain: true,
-        confirmed: false,
-        completed: false,
-        reminder: { inApp: true, browser: false },
-      });
-      if (matches.length >= 5) break;
-    }
-  }
-
-  return matches.map((deadline) => ({ ...deadline, status: deadlineStatus(deadline) }));
+export function detectImportantDates(input = '', options = {}) {
+  const payload = typeof input === 'string' ? { text: input } : input;
+  return extractImportantDates(payload, options).map((deadline) => ({ ...deadline, status: deadlineStatus(deadline) }));
 }
 
-export function generateSmartMetadata({ title = '', html = '', text = '', sourceUrl = '', summary = '', tagsText = '', fileName = '' } = {}) {
+export function generateSmartMetadata({ title = '', html = '', text = '', sourceUrl = '', summary = '', tagsText = '', fileName = '', pageId = '', sourceMetadata = {}, category = '', tags: existingTagList = [] } = {}) {
   const plainText = normalizeText(text || htmlToText(html));
   const haystack = `${title} ${fileName} ${plainText} ${summary} ${tagsText} ${sourceUrl}`.toLowerCase();
   const scored = scoreCategory(haystack);
-  const existingTags = splitTagsText(tagsText);
+  const existingTags = mergeTags(splitTagsText(tagsText), existingTagList);
   const tags = generateTags({ title, text: plainText || summary, sourceUrl, existingTags, fileName });
   const suggestedSummary = summary?.trim() || summarizeText(plainText, title);
-  const importantDates = detectImportantDates(`${title}. ${plainText}. ${summary}`);
+  const importantDates = detectImportantDates({
+    pageId,
+    title,
+    html,
+    text: plainText,
+    summary,
+    sourceUrl,
+    sourceMetadata,
+    category,
+    tags,
+  }, { pageId });
 
   return {
     category: scored.category,

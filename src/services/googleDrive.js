@@ -1,4 +1,4 @@
-import {
+﻿import {
   allowedEmail,
   googleApiKey,
   googleApprovedEmail,
@@ -88,6 +88,12 @@ export function canUseGooglePicker() {
   return Boolean(googleApiKey && googlePickerAppId);
 }
 
+export function getGooglePickerUnavailableMessage() {
+  if (!googleApiKey) return 'Choose from Drive requires VITE_GOOGLE_API_KEY.';
+  if (!googlePickerAppId) return 'Google Picker App ID could not be derived from the OAuth Client ID.';
+  return 'Google Picker is not configured.';
+}
+
 export async function pickDriveFolder(token) {
   if (!googleApiKey) throw new Error('VITE_GOOGLE_API_KEY is required for Google Picker folder selection.');
   if (!googlePickerAppId) throw new Error('Google Picker App ID could not be derived from the OAuth Client ID.');
@@ -117,6 +123,70 @@ export async function pickDriveFolder(token) {
           });
         }
         if (action === pickerApi.Action.CANCEL) resolve(null);
+      })
+      .build();
+
+    try {
+      picker.setVisible(true);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+export async function pickDriveFiles(token) {
+  if (!googleApiKey) throw new Error('Choose from Drive requires VITE_GOOGLE_API_KEY.');
+  if (!googlePickerAppId) throw new Error('Google Picker App ID could not be derived from the OAuth Client ID.');
+
+  const pickerApi = await waitForGooglePicker();
+  if (!pickerApi) throw new Error('Google Picker is not available.');
+
+  return new Promise((resolve, reject) => {
+    const view = new pickerApi.DocsView()
+      .setIncludeFolders(false)
+      .setSelectFolderEnabled(false)
+      .setMimeTypes([
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/zip',
+        'application/x-zip-compressed',
+        'image/png',
+        'image/jpeg',
+        'image/webp',
+        'text/plain',
+        'text/markdown',
+        'text/x-markdown',
+        'text/csv',
+        'application/json',
+      ]);
+
+    const picker = new pickerApi.PickerBuilder()
+      .setTitle('Choose files from Google Drive')
+      .setDeveloperKey(googleApiKey)
+      .setOAuthToken(token)
+      .setAppId(googlePickerAppId)
+      .enableFeature(pickerApi.Feature.MULTISELECT_ENABLED)
+      .addView(view)
+      .setCallback((data) => {
+        const action = data[pickerApi.Response.ACTION];
+        if (action === pickerApi.Action.PICKED) {
+          const docs = data[pickerApi.Response.DOCUMENTS] || [];
+          resolve(docs.map((doc) => ({
+            id: doc?.[pickerApi.Document.ID] || '',
+            name: doc?.[pickerApi.Document.NAME] || '',
+            mimeType: doc?.[pickerApi.Document.MIME_TYPE] || '',
+            size: doc?.[pickerApi.Document.SIZE] || 0,
+            webViewLink: doc?.[pickerApi.Document.URL] || '',
+            iconLink: doc?.[pickerApi.Document.ICON_URL] || '',
+            thumbnailLink: doc?.[pickerApi.Document.THUMBNAIL_URL] || '',
+          })).filter((item) => item.id));
+        }
+        if (action === pickerApi.Action.CANCEL) resolve([]);
       })
       .build();
 
@@ -166,7 +236,7 @@ function encodeQuery(params) {
   return new URLSearchParams(params).toString();
 }
 
-export async function requestDriveAccess({ forcePrompt = false } = {}) {
+export async function requestDriveAccess({ forcePrompt = false, prompt = '' } = {}) {
   if (!googleOAuthClientId) throw new Error('Google OAuth Client ID is not configured.');
   if (tokenStillValid() && !forcePrompt) return { accessToken: cachedToken, user: cachedDriveUser };
 
@@ -210,7 +280,7 @@ export async function requestDriveAccess({ forcePrompt = false } = {}) {
       error_callback: (error) => reject(new Error(error?.message || error?.type || 'Google Drive authorization failed.')),
     });
 
-    client.requestAccessToken({ prompt: forcePrompt ? 'consent' : '' });
+    client.requestAccessToken({ prompt: prompt || (forcePrompt ? 'consent select_account' : '') });
   });
 }
 
@@ -242,7 +312,7 @@ function requirePdf(file) {
 }
 
 export async function getDriveFileMetadata(token, fileId) {
-  const fields = 'id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,iconLink,parents,trashed';
+  const fields = 'id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,iconLink,parents,trashed,appProperties';
   return driveFetchJson(token, `/files/${encodeURIComponent(fileId)}?${encodeQuery({ fields })}`);
 }
 
@@ -289,7 +359,7 @@ export async function findAppVisibleVaultFolder(token) {
 
 export async function listDrivePdfs(token, folderId) {
   const q = `'${folderId.replace(/'/g, "\\'")}' in parents and mimeType='application/pdf' and trashed=false`;
-  const fields = 'files(id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,parents)';
+  const fields = 'files(id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,parents,appProperties)';
   const data = await driveFetchJson(token, `/files?${encodeQuery({ q, spaces: 'drive', pageSize: '100', orderBy: 'modifiedTime desc', fields })}`);
   return data.files || [];
 }
@@ -360,6 +430,7 @@ export function driveWebUrl(fileId) {
 export function normalizeDrivePdfMetadata(file) {
   return {
     driveFileId: file.id,
+    name: file.appProperties?.originalName || file.name || '',
     driveName: file.name || '',
     mimeType: file.mimeType || 'application/pdf',
     size: Number(file.size || 0),
@@ -377,14 +448,21 @@ export function normalizeDrivePdfMetadata(file) {
 
 
 
-export function uploadFileToDrive(token, folderId, file, onProgress = () => {}, extraMetadata = {}) {
+export function uploadFileToDrive(token, folderId, file, onProgress = () => {}, extraMetadata = {}, options = {}) {
   const mimeType = file.type || 'application/octet-stream';
   const boundary = `knowledge_vault_${crypto.randomUUID()}`;
+  const originalName = file.name || 'Untitled file';
+  const safeSuffix = crypto.randomUUID().slice(0, 8);
+  const extension = originalName.match(/(\.[^.]+)$/)?.[1] || '';
   const metadata = {
     ...extraMetadata,
-    name: file.name || 'Untitled file',
+    name: `${originalName.replace(/(\.[^.]+)?$/, '')}-${safeSuffix}${extension}`,
     mimeType,
     parents: [folderId],
+    appProperties: {
+      ...(extraMetadata.appProperties || {}),
+      originalName,
+    },
   };
 
   const body = new Blob([
@@ -399,7 +477,29 @@ export function uploadFileToDrive(token, folderId, file, onProgress = () => {}, 
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const fields = 'id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,parents,iconLink';
+    const fields = 'id,name,mimeType,size,modifiedTime,createdTime,webViewLink,webContentLink,thumbnailLink,md5Checksum,parents,iconLink,appProperties';
+    let settled = false;
+    const settle = (fn) => (value) => {
+      if (settled) return;
+      settled = true;
+      if (options.signal) options.signal.removeEventListener('abort', handleAbort);
+      fn(value);
+    };
+    const resolveOnce = settle(resolve);
+    const rejectOnce = settle(reject);
+    const handleAbort = () => {
+      try { xhr.abort(); } catch { /* noop */ }
+      rejectOnce(new Error('Upload cancelled.'));
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        handleAbort();
+        return;
+      }
+      options.signal.addEventListener('abort', handleAbort, { once: true });
+    }
+
     xhr.open('POST', `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart&${encodeQuery({ fields })}`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', `multipart/related; boundary=${boundary}`);
@@ -407,20 +507,24 @@ export function uploadFileToDrive(token, folderId, file, onProgress = () => {}, 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     };
-    xhr.onerror = () => reject(new Error('Google Drive upload failed.'));
+    xhr.onerror = () => rejectOnce(new Error('Google Drive upload failed.'));
+    xhr.onabort = () => rejectOnce(new Error('Upload cancelled.'));
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
         try {
           const parsed = JSON.parse(xhr.responseText);
-          reject(new Error(parsed.error?.message || 'Google Drive upload failed.'));
+          rejectOnce(new Error(parsed.error?.message || 'Google Drive upload failed.'));
         } catch {
-          reject(new Error(xhr.responseText || 'Google Drive upload failed.'));
+          rejectOnce(new Error(xhr.responseText || 'Google Drive upload failed.'));
         }
         return;
       }
-      resolve(JSON.parse(xhr.responseText));
+      resolveOnce(JSON.parse(xhr.responseText));
     };
     xhr.send(body);
   });
 }
+
+
+
 

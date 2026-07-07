@@ -58,7 +58,20 @@ const iconPaths = {
       <path d="M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" />
     </>
   ),
-  calendarClock: (
+  calendarDays: (
+    <>
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 14h.01" />
+      <path d="M12 14h.01" />
+      <path d="M16 14h.01" />
+      <path d="M8 18h.01" />
+      <path d="M12 18h.01" />
+      <path d="M16 18h.01" />
+    </>
+  ),  calendarClock: (
     <>
       <path d="M7 3v4" />
       <path d="M17 3v4" />
@@ -272,6 +285,12 @@ const iconPaths = {
     </>
   ),
   check: <path d="m5 12 4 4 10-10" />,
+  x: (
+    <>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </>
+  ),
   clock: (
     <>
       <path d="M12 7v5l3 2" />
