@@ -30,6 +30,7 @@ function AuthenticatedApp() {
   const [pdfs, setPdfs] = useState([]);
   const [pdfsLoaded, setPdfsLoaded] = useState(false);
   const [pdfsError, setPdfsError] = useState('');
+  const dateMigrationStartedRef = useRef(false);
 
   useEffect(() => {
     if (!user) {
@@ -68,6 +69,10 @@ function AuthenticatedApp() {
       unsubscribePdfs?.();
     };
   }, [user]);
+
+  useEffect(() => {
+    dateMigrationStartedRef.current = false;
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user || !pagesLoaded || dateMigrationStartedRef.current) return;
