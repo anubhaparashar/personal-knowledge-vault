@@ -518,7 +518,18 @@ function buildDateContexts(input = {}) {
   add(metadata.sourceName, 'source-name');
   add(metadata.canonicalUrl, 'source-url');
   contexts.push(...htmlContexts(input.html));
-  contexts.push(...splitTextContexts(input.importedText || input.text || input.plainText, 'text'));
+  const combinedText = [
+    input.importedText,
+    input.importedContent,
+    input.webpageContent,
+    input.fileText,
+    input.extractedText,
+    input.documentText,
+    input.content,
+    input.text,
+    input.plainText,
+  ].filter(Boolean).join('\n');
+  contexts.push(...splitTextContexts(combinedText, 'text'));
   return contexts.filter((context) => /\d|tomorrow|next|within|in |end of this month/i.test(context.text));
 }
 

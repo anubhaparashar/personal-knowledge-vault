@@ -13,3 +13,5 @@ serviceAccountKey.json
 *.key
 .DS_Store
 vite-dev*.log
+
+visual-check-screenshots/
