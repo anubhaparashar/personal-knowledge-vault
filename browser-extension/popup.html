@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Save to AP Research Vault</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="mark">AP</span>
+        <div>
+          <strong>AP Research Vault</strong>
+          <small>Save current page or selected text</small>
+        </div>
+      </header>
+      <label>
+        Category
+        <select id="category">
+          <option value="">Auto categorise</option>
+          <option>Research Opportunities/Scholarships</option>
+          <option>Research Opportunities/Postdoctoral Opportunities</option>
+          <option>Research Opportunities/Research Jobs</option>
+          <option>Research Opportunities/Fellowships</option>
+          <option>Research Opportunities/Research Grants</option>
+          <option>Publishing/Conference Calls and Deadlines</option>
+          <option>Publishing/Journal Calls and Special Issues</option>
+          <option>Research/Paper Ideas</option>
+          <option>Research/Project Ideas</option>
+          <option>Research/Research Papers and Reading Notes</option>
+          <option>Personal Knowledge/Web References</option>
+          <option>Personal Knowledge/General Notes</option>
+        </select>
+      </label>
+      <button id="save-page">Save current page</button>
+      <button id="save-selection">Save selected text</button>
+      <button id="open-inbox">Open Shared Inbox</button>
+      <p id="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

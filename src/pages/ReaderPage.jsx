@@ -15,6 +15,7 @@ import { downloadAttachmentBlob } from '../services/attachments';
 import { daysUntil, deadlineStatus } from '../utils/intelligence';
 import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { formatDetectedDate } from '../utils/dates';
+import { formatDiscoveryTimestamp, originLabel, originTone } from '../services/discovery';
 
 function deadlineLabel(deadline) {
   const status = deadlineStatus(deadline);
@@ -121,7 +122,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             return (
               <article key={deadline.id || `${deadline.type}-${deadline.date}`} className={`deadline-row ${status.toLowerCase().replace(/\s+/g, '-')}`}>
                 <div>
-                  <strong>{deadline.type || 'Deadline'}</strong>
+                  <strong>{deadline.displayLabel || deadline.title || deadline.type || 'Deadline'}</strong>
                   <span>{deadline.snippet || dateSourceLabel(deadline)}</span>
                 </div>
                 <time dateTime={deadline.date || undefined}>{formatDetectedDate(deadline)}</time>
@@ -153,6 +154,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           <div>
             <div className="tag-row">
               <span>{content.category || 'Uncategorised'}</span>
+              <span className={`origin-badge badge-${originTone(content.origin || page.origin || page.createdOrigin || 'manually-added')}`}>{originLabel(content.origin || page.origin || page.createdOrigin || 'manually-added')}</span>
               {page.secure ? <span>Decrypted for this session</span> : null}
             </div>
             <h2>{content.title}</h2>
@@ -170,6 +172,24 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
         <section className="reader-meta-row">
           {content.sourceUrl ? <a href={content.sourceUrl} target="_blank" rel="noopener noreferrer">Open original source</a> : <span>Original note</span>}
           {content.tags?.length ? <div className="tag-row">{content.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
+        </section>
+
+        <section className="record-origin-panel reader-section">
+          {(content.origin || page.origin) === 'auto-discovered' || (content.origin || page.origin) === 'scholarly-api' ? (
+            <dl>
+              <div><dt>Source</dt><dd>{content.discovery?.sourceName || content.sourceDomain || content.sourceUrl || 'Official source'}</dd></div>
+              <div><dt>First discovered</dt><dd>{formatDiscoveryTimestamp(content.discovery?.firstDiscoveredAt)}</dd></div>
+              <div><dt>Last checked</dt><dd>{formatDiscoveryTimestamp(content.discovery?.lastCheckedAt)}</dd></div>
+              <div><dt>Relevance score</dt><dd>{Math.round((content.discovery?.relevanceScore || 0) * 100)}%</dd></div>
+              <div><dt>Date confidence</dt><dd>{Math.round((content.discovery?.dateConfidence || 0) * 100)}%</dd></div>
+              <div><dt>Current status</dt><dd>{content.discovery?.status || 'active'}</dd></div>
+            </dl>
+          ) : (
+            <dl>
+              <div><dt>Created</dt><dd>{formatDate(page.createdAt)}</dd></div>
+              <div><dt>Last updated</dt><dd>{formatDate(page.updatedAt)}</dd></div>
+            </dl>
+          )}
         </section>
 
         <div className="view-switch" role="group" aria-label="Reading mode">

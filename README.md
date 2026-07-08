@@ -241,3 +241,25 @@ Restoring a JSON backup restores metadata and links only when the referenced Fir
 - Browser notifications depend on browser permission and tab/app lifecycle.
 - Email or background reminders require a scheduled backend.
 - Old binary DOC files are uploaded but text extraction is unavailable in the browser.
+## Share to AP Research Vault
+
+The app is configured as an installable PWA named **AP Research Vault** with a GitHub Pages-safe manifest:
+
+- `start_url`: `/personal-knowledge-vault/`
+- `scope`: `/personal-knowledge-vault/`
+- `display`: `standalone`
+- GET Web Share Target: `./?share-target=1`
+
+Shared links and text are captured into IndexedDB immediately, before Firebase authentication. After sign-in, pending captures sync to `users/{uid}/sharedInbox/{captureId}` and can be reviewed in **Shared Inbox**. High-confidence captures are saved to the vault automatically when authenticated; medium-confidence captures are saved with review suggested; low-confidence and duplicate captures stay in Shared Inbox until confirmed.
+
+Desktop fallbacks:
+
+- Settings includes a **Save to AP Research Vault** bookmarklet.
+- `browser-extension/` contains an optional unpacked Chrome/Edge extension.
+- Shared Inbox includes a paste fallback for links and post text.
+
+Current platform notes:
+
+- The reliable production share target is link-and-text GET sharing. Multipart file sharing has a service-worker queue scaffold but is not enabled as the primary manifest target so it does not destabilise link/text sharing on GitHub Pages.
+- Facebook and LinkedIn content behind login is not bypassed. The shared title/text/URL is preserved and classified even when page extraction fails.
+- Android share-sheet appearance requires installing the production PWA on an Android device and sharing a real URL into it.

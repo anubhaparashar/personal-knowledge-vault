@@ -9,6 +9,7 @@ import {
   FlaskConical,
   GraduationCap,
   Home,
+  Inbox,
   Landmark,
   LayoutGrid,
   Lightbulb,
@@ -22,14 +23,18 @@ import {
   Sun,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import NewEntryMenu from './NewEntryMenu';
+import ImportFromLinkModal from './ImportFromLinkModal';
 
 const NAV = [
   { href: '#/', label: 'Overview', icon: Home },
   { href: '#/notes', label: 'All Notes', icon: FileText },
   { href: '#/deadlines', label: 'Upcoming Deadlines', icon: CalendarClock },
   { href: '#/calendar', label: 'Research Calendar', icon: CalendarDays },
+  { href: '#/shared-inbox', label: 'Shared Inbox', icon: Inbox },
   { href: '#/applications', label: 'Applications', icon: ClipboardCheck },
   { href: '#/ideas', label: 'Paper Ideas', icon: Lightbulb, group: 'Research' },
+  { href: '#/project-ideas', label: 'Project Ideas', icon: LayoutGrid, group: 'Research' },
   { href: '#/papers', label: 'Research Papers', icon: FileText, group: 'Research' },
   { href: '#/literature', label: 'Literature Notes', icon: BookOpen, group: 'Research' },
   { href: '#/projects', label: 'Research Projects', icon: LayoutGrid, group: 'Research' },
@@ -52,9 +57,11 @@ function routeTitle(path) {
     '': 'Research Library',
     notes: 'All Notes',
     calendar: 'Research Calendar',
+    'shared-inbox': 'Shared Inbox',
     deadlines: 'Upcoming Deadlines',
     applications: 'Applications',
     ideas: 'Paper Ideas',
+    'project-ideas': 'Project Ideas',
     papers: 'Research Papers',
     literature: 'Literature Notes',
     projects: 'Research Projects',
@@ -90,6 +97,7 @@ export default function AppShell({ children, title = 'Research Library', context
   const [dark, setDark] = useState(() => localStorage.getItem('aprv-theme') === 'dark');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [route, setRoute] = useState(() => window.location.hash || '#/');
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -113,6 +121,12 @@ export default function AppShell({ children, title = 'Research Library', context
     document.body.classList.toggle('drawer-open', drawerOpen);
     return () => document.body.classList.remove('drawer-open');
   }, [drawerOpen]);
+
+  useEffect(() => {
+    const openImport = () => setImportOpen(true);
+    window.addEventListener('kv-open-import-link', openImport);
+    return () => window.removeEventListener('kv-open-import-link', openImport);
+  }, []);
 
   const groups = useMemo(() => {
     const map = new Map();
@@ -214,10 +228,7 @@ export default function AppShell({ children, title = 'Research Library', context
             <button className="icon-button" type="button" aria-label="Open notifications and deadlines" onClick={() => navigate('#/deadlines')}>
               <Bell size={19} />
             </button>
-            <button className="button primary topbar-new-entry" type="button" onClick={() => navigate('#/edit/new')}>
-              <span aria-hidden="true">+</span>
-              <span>New Entry</span>
-            </button>
+            <NewEntryMenu className="topbar-new-entry-menu" onImportFromLink={() => setImportOpen(true)} />
           </div>
         </header>
 
@@ -226,6 +237,7 @@ export default function AppShell({ children, title = 'Research Library', context
           {contextPanel ? <aside className="workspace-context">{contextPanel}</aside> : null}
         </main>
       </div>
+      <ImportFromLinkModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

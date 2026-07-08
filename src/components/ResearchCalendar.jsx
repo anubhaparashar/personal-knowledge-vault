@@ -452,7 +452,24 @@ export function DateDetailsPanel({ date, events, onClose, onOpenEntry, onOpenEve
           </div>
         </section>
       )) : (
-        <EmptyCalendarState compact title="No items on this date" description="Add a reminder or attach a date to a saved research entry." action={<button type="button" className="button primary" onClick={() => onAddDate(date)}>Add reminder</button>} />
+        <EmptyCalendarState compact title="No items on this date" description="Add a reminder or attach a date to a saved research entry." action={(
+          <div className="empty-date-actions">
+            <button type="button" className="button primary" onClick={() => onAddDate(date, 'Personal reminder')}>Add reminder</button>
+            <button type="button" className="button secondary" onClick={() => onAddDate(date, 'Application deadline')}>Add opportunity deadline</button>
+            <button type="button" className="button secondary" onClick={() => onAddDate(date, 'Event date')}>Add conference date</button>
+            <button type="button" className="button secondary" onClick={() => onAddDate(date, 'Interview')}>Add interview</button>
+            <button type="button" className="button secondary" onClick={() => onAddDate(date, 'Personal reminder')}>Add personal event</button>
+            <button type="button" className="button secondary" onClick={() => {
+              localStorage.setItem('kv-editor-preload', JSON.stringify({
+                title: `Note for ${formatDateShort(date)}`,
+                category: 'Personal Knowledge/General Notes',
+                origin: 'manually-added',
+                importantDates: [{ id: crypto.randomUUID(), type: 'Personal reminder', title: 'Personal reminder', date, source: 'manual', confirmed: true, manuallyEdited: true }],
+              }));
+              window.location.hash = `#/edit/new-${Date.now()}`;
+            }}>Create note for this date</button>
+          </div>
+        )} />
       )}
     </aside>
   );
@@ -485,7 +502,7 @@ export function EventPreview({ event, onClose, onOpenEntry, onEdit, onComplete }
     </div>
   );
 }
-export function DateFormModal({ open, pages, event, initialDate, onClose, onSave }) {
+export function DateFormModal({ open, pages, event, initialDate, initialType = 'Personal reminder', onClose, onSave }) {
   const [form, setForm] = useState(null);
 
   useEffect(() => {
@@ -494,7 +511,7 @@ export function DateFormModal({ open, pages, event, initialDate, onClose, onSave
       pageId: event?.pageId || pages.find((page) => !page.secure)?.id || '',
       dateId: event?.dateId || '',
       title: event?.title || '',
-      type: event?.type || 'Personal reminder',
+      type: event?.type || initialType || 'Personal reminder',
       date: event?.date || initialDate || todayIso(),
       endDate: event?.endDate || '',
       allDay: event?.allDay ?? true,
@@ -508,7 +525,7 @@ export function DateFormModal({ open, pages, event, initialDate, onClose, onSave
       completed: event?.completed || false,
       origin: event?.origin || 'manual',
     });
-  }, [open, event, initialDate, pages]);
+  }, [open, event, initialDate, initialType, pages]);
 
   if (!open || !form) return null;
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -710,7 +727,7 @@ export default function ResearchCalendar({ pages = [], loading = false, error = 
     const parsed = parseLocalDate(date);
     if (parsed) setCurrentDate(parsed);
   };
-  const openAddDate = (date = selectedDate) => setModalState({ mode: 'add', initialDate: date });
+  const openAddDate = (date = selectedDate, initialType = 'Personal reminder') => setModalState({ mode: 'add', initialDate: date, initialType });
   const openEntry = (event) => { window.location.hash = `#/read/${event.pageId}`; };
   const saveDate = async (input) => { await onSaveDate?.(input); };
   const completeDate = async (event) => { await onCompleteDate?.(event); setPreviewEvent(null); };
@@ -767,7 +784,7 @@ export default function ResearchCalendar({ pages = [], loading = false, error = 
 
       {detailsOpen ? <DateDetailsPanel date={selectedDate} events={selectedEvents} onClose={() => setDetailsOpen(false)} onOpenEntry={openEntry} onOpenEvent={setPreviewEvent} onEditEvent={(event) => setModalState({ mode: 'edit', event })} onAddDate={openAddDate} onComplete={completeDate} onDelete={deleteDate} /> : null}
       <EventPreview event={previewEvent} onClose={() => setPreviewEvent(null)} onOpenEntry={openEntry} onEdit={(event) => setModalState({ mode: 'edit', event })} onComplete={completeDate} />
-      <DateFormModal open={Boolean(modalState)} pages={effectivePages} event={modalState?.event} initialDate={modalState?.initialDate} onClose={() => setModalState(null)} onSave={saveDate} />
+      <DateFormModal open={Boolean(modalState)} pages={effectivePages} event={modalState?.event} initialDate={modalState?.initialDate} initialType={modalState?.initialType} onClose={() => setModalState(null)} onSave={saveDate} />
     </div>
   );
 }

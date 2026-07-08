@@ -1,0 +1,39 @@
+body {
+  width: 310px;
+  margin: 0;
+  color: #172033;
+  background: #fcfaf6;
+  font: 14px/1.45 Inter, system-ui, sans-serif;
+}
+main { display: grid; gap: 12px; padding: 14px; }
+header { display: flex; align-items: center; gap: 10px; }
+header small { display: block; color: #64748b; }
+.mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #fcfaf6;
+  background: #102a4c;
+  font: 700 17px Georgia, serif;
+}
+label { display: grid; gap: 6px; font-weight: 700; }
+select, button {
+  min-height: 38px;
+  border: 1px solid #cdd8e6;
+  border-radius: 9px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  font-weight: 800;
+}
+button:first-of-type {
+  color: #fff;
+  border-color: #102a4c;
+  background: #102a4c;
+}
+#status { min-height: 18px; margin: 0; color: #64748b; }

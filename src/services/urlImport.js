@@ -1,4 +1,4 @@
-import { urlImportEndpoint } from '../firebase';
+import { auth, urlImportEndpoint } from '../firebase';
 
 export function validateImportUrl(value) {
   let parsed;
@@ -18,10 +18,15 @@ export async function importUrlContent(sourceUrl, { signal } = {}) {
   if (!urlImportEndpoint) {
     throw new Error('URL import endpoint is not configured. Deploy the Firebase Function and set VITE_URL_IMPORT_ENDPOINT.');
   }
+  const currentUser = auth?.currentUser;
+  if (!currentUser) {
+    throw new Error('Sign in before source enrichment.');
+  }
+  const token = await currentUser.getIdToken();
 
   const response = await fetch(urlImportEndpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ url }),
     signal,
   });

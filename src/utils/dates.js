@@ -1,4 +1,4 @@
-export const DATE_ANALYSIS_VERSION = 2;
+export const DATE_ANALYSIS_VERSION = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_PATTERN = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
@@ -59,48 +59,71 @@ const NUMBER_WORDS = new Map([
 ]);
 
 const EXPLICIT_DATE_LABELS = [
+  'deadline for revision submissions',
+  'revision submission deadline',
+  'revision submission',
+  'revision deadline',
+  'revised manuscript deadline',
+  'resubmission deadline',
+  'notification of final decisions',
+  'notification of final decision',
+  'final decision notification',
+  'final acceptance decision',
+  'final review decision',
+  'first-round review decisions',
+  'first-round review decision',
+  'first round decision',
+  'initial review decision',
+  'first review result',
+  'abstract submission deadline',
+  'abstract submission',
+  'abstract deadline',
+  'extended abstract deadline',
+  'full-paper submission deadline',
+  'full paper deadline',
+  'paper submission',
+  'manuscript deadline',
+  'submission deadline',
+  'submissions deadline',
+  'submission closes',
+  'submit by',
   'application deadline',
   'last date to apply',
   'closing date',
   'apply by',
   'apply before',
-  'deadline',
-  'abstract submission',
-  'full-paper submission',
-  'full paper submission',
-  'paper submission',
-  'manuscript submission',
-  'notification date',
   'acceptance notification',
-  'camera-ready submission',
-  'camera ready submission',
+  'notification of acceptance',
+  'notification date',
+  'camera-ready deadline',
+  'camera-ready',
+  'camera ready',
+  'final manuscript submission',
   'registration deadline',
-  'interview date',
-  'conference date',
-  'conference dates',
-  'event date',
-  'fellowship start date',
-  'expected joining date',
-  'expected start date',
+  'author registration',
+  'early registration',
+  'tentative publication',
+  'expected publication month',
+  'planned publication',
   'publication date',
+  'expected publication',
+  'publication scheduled',
+  'conference dates',
+  'event dates',
+  'symposium dates',
+  'workshop dates',
   'opening date',
-  'results date',
-  'applications close',
-  'applications open',
-  'submit before',
-  'submission',
+  'interview date',
 ];
 
 const PRIMARY_PRIORITY = [
-  [/application|apply|closing|last date|submission deadline|deadline/i, 1],
-  [/abstract/i, 2],
-  [/full[- ]?paper/i, 3],
-  [/registration/i, 4],
-  [/interview/i, 5],
-  [/notification|acceptance/i, 6],
-  [/camera[- ]?ready/i, 7],
-  [/event|conference/i, 8],
-  [/expected start|fellowship start|joining|start date/i, 9],
+  [/submission-deadline|application-deadline|scholarship-deadline|postdoctoral-application-deadline|fellowship-deadline|general-deadline|submission|application|apply|closing|last date/i, 1],
+  [/revision-submission-deadline|revision/i, 2],
+  [/registration-deadline|registration/i, 3],
+  [/camera-ready-deadline|camera/i, 4],
+  [/first-round-review-decision|final-decision-notification|notification-date|review|notification|decision/i, 5],
+  [/conference-dates|event-date|conference|event|symposium|workshop/i, 6],
+  [/tentative-publication|publication-date|publication/i, 7],
 ];
 
 function cleanText(value = '') {
@@ -110,6 +133,37 @@ function cleanText(value = '') {
 function cleanKey(value = '') {
   return cleanText(value).toLowerCase();
 }
+
+function slug(value = '') {
+  return cleanKey(value).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+const DATE_TYPE_RULES = [
+  { type: 'revision-submission-deadline', label: 'Revision submission deadline', patterns: ['deadline for revision submissions', 'revision submission deadline', 'revision submission', 'revision deadline', 'revised manuscript deadline', 'resubmission deadline'] },
+  { type: 'final-decision-notification', label: 'Final decision notification', patterns: ['notification of final decisions', 'notification of final decision', 'final decision notification', 'final decision', 'final acceptance decision', 'final review decision'] },
+  { type: 'first-round-review-decision', label: 'First-round review decision', patterns: ['first-round review decisions', 'first-round review decision', 'first round decision', 'initial review decision', 'first review result'] },
+  { type: 'abstract-submission-deadline', label: 'Abstract submission deadline', patterns: ['abstract submission deadline', 'abstract submission', 'abstract deadline', 'extended abstract deadline'] },
+  { type: 'full-paper-submission-deadline', label: 'Full-paper submission deadline', patterns: ['full-paper submission deadline', 'full paper submission deadline', 'full paper deadline', 'paper submission', 'manuscript deadline'] },
+  { type: 'camera-ready-deadline', label: 'Camera-ready deadline', patterns: ['camera-ready deadline', 'camera ready deadline', 'camera-ready', 'camera ready', 'final manuscript submission'] },
+  { type: 'registration-deadline', label: 'Registration deadline', patterns: ['registration deadline', 'author registration', 'early registration'] },
+  { type: 'submission-deadline', label: 'Submission deadline', patterns: ['submissions deadline', 'submission deadline', 'submission closes', 'submit by', 'paper submission deadline', 'manuscript submission deadline'] },
+  { type: 'notification-date', label: 'Notification date', patterns: ['acceptance notification', 'notification of acceptance', 'notification date'] },
+  { type: 'tentative-publication', label: 'Tentative publication', patterns: ['tentative publication', 'expected publication month', 'planned publication'] },
+  { type: 'publication-date', label: 'Publication date', patterns: ['publication date', 'expected publication', 'publication scheduled', 'published', 'date published'] },
+  { type: 'conference-dates', label: 'Conference dates', patterns: ['conference dates', 'event dates', 'symposium dates', 'workshop dates'] },
+  { type: 'application-deadline', label: 'Application deadline', patterns: ['application deadline', 'applications close', 'application closes', 'last date to apply', 'apply by', 'apply before', 'closing date'] },
+  { type: 'opening-date', label: 'Opening date', patterns: ['opening date', 'applications open', 'application opens', 'opens on'] },
+  { type: 'interview-date', label: 'Interview date', patterns: ['interview date', 'interview'] },
+  { type: 'general-deadline', label: 'Deadline', patterns: ['deadline', 'due date', 'due by'] },
+  { type: 'event-date', label: 'Event date', patterns: ['event date', 'conference date', 'symposium date', 'workshop date'] },
+  { type: 'detected-date', label: 'Detected date', patterns: [] },
+];
+
+const DATE_TYPE_BY_TYPE = new Map(DATE_TYPE_RULES.map((rule) => [rule.type, rule]));
+const LEGACY_DATE_TYPE_MAP = new Map(DATE_TYPE_RULES.flatMap((rule) => [
+  [cleanKey(rule.label), rule],
+  [rule.type, rule],
+]));
 
 function startOfDay(value = new Date()) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
@@ -218,20 +272,30 @@ function resolveYear({ explicitYear, text, index, month, day, reference }) {
 }
 
 function snippetAround(text, start, end, heading = '') {
+  const block = String(text || '');
   const beforeBoundary = Math.max(
     0,
-    text.lastIndexOf('.', start - 1) + 1,
-    text.lastIndexOf('\n', start - 1) + 1,
-    text.lastIndexOf(';', start - 1) + 1,
+    block.lastIndexOf('\n', start - 1) + 1,
+    block.lastIndexOf(';', start - 1) + 1,
+    block.lastIndexOf('|', start - 1) + 1,
   );
   const afterCandidates = [
-    text.indexOf('.', end),
-    text.indexOf('\n', end),
-    text.indexOf(';', end),
+    block.indexOf('\n', end),
+    block.indexOf(';', end),
+    block.indexOf('|', end),
   ].filter((value) => value >= 0);
-  const afterBoundary = afterCandidates.length ? Math.min(...afterCandidates) + 1 : Math.min(text.length, end + 120);
-  const snippet = cleanText(text.slice(Math.max(0, beforeBoundary || start - 120), afterBoundary));
-  return cleanText([heading, snippet].filter(Boolean).join(' - ')).slice(0, 260);
+  const afterBoundary = afterCandidates.length ? Math.min(...afterCandidates) : block.length;
+  const snippet = cleanText(block.slice(Math.max(0, beforeBoundary), afterBoundary));
+  return cleanText([heading, snippet].filter(Boolean).join(' - ')).slice(0, 200);
+}
+
+function labelForCandidate(context = {}, start = 0, end = 0) {
+  const text = String(context.text || '');
+  const before = text.slice(0, start).split(/[\n;|]/).pop() || '';
+  const after = text.slice(end).split(/[\n;|]/)[0] || '';
+  const colonLabel = before.includes(':') ? before.slice(before.lastIndexOf(':') + 1) : before;
+  const label = cleanText(colonLabel || before || after || context.heading || text).slice(-140);
+  return cleanText([context.heading, label].filter(Boolean).join(' '));
 }
 
 function hasOverlap(used, start, end) {
@@ -257,16 +321,22 @@ function parseTimeAndZone(text, start, end) {
 }
 
 function addAbsoluteCandidate(candidates, used, context, match, start, end, parsed) {
-  if (!parsed?.date || hasOverlap(used, start, end)) return;
+  const hasPreciseDate = parsed?.date instanceof Date && !Number.isNaN(parsed.date.getTime());
+  const hasPartialMonth = parsed?.precision === 'month' && Number(parsed.year) && Number(parsed.month);
+  if ((!hasPreciseDate && !hasPartialMonth) || hasOverlap(used, start, end)) return;
   used.push([start, end]);
   const { time, timeZone } = parseTimeAndZone(context.text, start, end);
+  const label = labelForCandidate(context, start, end);
   candidates.push({
     ...parsed,
     time,
     timeZone,
     snippet: snippetAround(context.text, start, end, context.heading),
-    context: cleanText([context.heading, context.text].filter(Boolean).join(' ')),
+    context: label || context.text,
+    sourceBlock: context.text,
+    sourceBlockIndex: context.index ?? 0,
     sourceRole: context.role,
+    localLabel: label,
   });
 }
 
@@ -474,10 +544,10 @@ function htmlContexts(html = '') {
       if (!text) return;
       if (/^h[1-6]$/.test(tag)) {
         heading = text;
-        contexts.push({ text, heading: '', role: 'heading' });
+        contexts.push({ text, heading: '', role: 'heading', index: contexts.length });
         return;
       }
-      contexts.push({ text, heading, role: tag === 'tr' ? 'table-row' : 'html' });
+      contexts.push({ text, heading, role: tag === 'tr' ? 'table-row' : 'html', index: contexts.length });
     });
     return contexts;
   } catch {
@@ -485,17 +555,30 @@ function htmlContexts(html = '') {
   }
 }
 
+function textWithBlockBoundaries(value = '') {
+  return String(value || '')
+    .replace(/\r/g, '\n')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/(p|li|tr|h[1-6]|div|section|article|blockquote|dt|dd)\s*>/gi, '\n')
+    .replace(/<\s*(li|tr|h[1-6]|p|dt|dd)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/(^|\n)\s*[\u2022\u25AA\u25E6]\s+/g, '$1')
+    .replace(/(^|\n)\s*[-*]\s+(?=\S)/g, '$1')
+    .replace(/[ \t]+/g, ' ');
+}
+
 function splitTextContexts(text = '', role = 'text') {
-  const clean = String(text || '').replace(/\r/g, '\n');
+  const clean = textWithBlockBoundaries(text);
   if (!clean.trim()) return [];
   const lines = clean
     .split(/\n+/)
+    .flatMap((line) => line.split(/\s+[\u2022\u25AA\u25E6]\s+|\s+\*\s+(?=\S)/))
     .map((line) => cleanText(line))
     .filter(Boolean);
   const parts = lines.length > 1
     ? lines
     : cleanText(clean).split(/(?<=[.!?])\s+|;\s+/).map((part) => cleanText(part)).filter(Boolean);
-  return parts.map((part) => ({ text: part, heading: '', role }));
+  return parts.map((part, index) => ({ text: part, heading: '', role, index }));
 }
 
 function buildDateContexts(input = {}) {
@@ -505,7 +588,7 @@ function buildDateContexts(input = {}) {
 
   function add(text, role, heading = '') {
     const value = cleanText(text);
-    if (value) contexts.push({ text: value, heading, role });
+    if (value) contexts.push({ text: value, heading, role, index: contexts.length });
   }
 
   add(input.title, 'title');
@@ -530,32 +613,34 @@ function buildDateContexts(input = {}) {
     input.plainText,
   ].filter(Boolean).join('\n');
   contexts.push(...splitTextContexts(combinedText, 'text'));
-  return contexts.filter((context) => /\d|tomorrow|next|within|in |end of this month/i.test(context.text));
+  return contexts.map((context, index) => ({ ...context, index: context.index ?? index })).filter((context) => /\d|tomorrow|next|within|in |end of this month/i.test(context.text));
+}
+
+function normaliseDateType(value = '') {
+  const key = cleanKey(value);
+  if (!key) return null;
+  if (LEGACY_DATE_TYPE_MAP.has(key)) return LEGACY_DATE_TYPE_MAP.get(key);
+  const keySlug = slug(key);
+  if (DATE_TYPE_BY_TYPE.has(keySlug)) return DATE_TYPE_BY_TYPE.get(keySlug);
+  return null;
 }
 
 export function classifyDateType(context = '') {
-  const value = cleanKey(context);
-  if (/\b(page|last)\s+(updated|modified)\b|updated on|last modified/.test(value)) return 'Page updated date';
-  if (/\b(publication date|published|posted|date published|article date)\b/.test(value)) return 'Publication date';
-  if (/abstract/.test(value)) return 'Abstract submission deadline';
-  if (/full[- ]?paper/.test(value)) return 'Full-paper submission deadline';
-  if (/manuscript/.test(value)) return 'Manuscript submission deadline';
-  if (/camera[- ]?ready/.test(value)) return 'Camera-ready deadline';
-  if (/registration/.test(value)) return 'Registration deadline';
-  if (/interview/.test(value)) return 'Interview date';
-  if (/notification|acceptance/.test(value)) return 'Notification date';
-  if (/conference|symposium|workshop|event/.test(value)) return /range|dates/.test(value) ? 'Conference event range' : 'Conference date';
-  if (/joining/.test(value)) return 'Expected joining date';
-  if (/expected start|start date|fellowship start/.test(value)) return value.includes('fellowship') ? 'Fellowship start date' : 'Expected start date';
-  if (/opening date|applications? open|opens on/.test(value)) return 'Opening date';
-  if (/results? date|results? announced/.test(value)) return 'Results date';
-  if (/scholarship/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return 'Scholarship deadline';
-  if (/postdoc|postdoctoral/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return 'Postdoctoral application deadline';
-  if (/fellowship/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return 'Fellowship deadline';
-  if (/apply|application|applications? close|closing|last date/.test(value)) return 'Application deadline';
-  if (/submission|submit before|submit by/.test(value)) return 'Submission deadline';
-  if (/deadline|due date|due by/.test(value)) return 'Deadline';
-  return 'Detected date';
+  const direct = normaliseDateType(context);
+  if (direct && direct.type !== 'detected-date') return direct;
+  const value = cleanKey(context).replace(/[\u2013\u2014]/g, '-');
+  if (/\b(page|last)\s+(updated|modified)\b|updated on|last modified/.test(value)) return { type: 'page-updated-date', label: 'Page updated date' };
+  for (const rule of DATE_TYPE_RULES) {
+    if (rule.type === 'detected-date') continue;
+    const patterns = [...rule.patterns].sort((a, b) => b.length - a.length);
+    if (patterns.some((phrase) => value.includes(phrase))) return rule;
+  }
+  if (/scholarship/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return { type: 'scholarship-deadline', label: 'Scholarship deadline' };
+  if (/postdoc|postdoctoral/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return { type: 'postdoctoral-application-deadline', label: 'Postdoctoral application deadline' };
+  if (/fellowship/.test(value) && /deadline|close|apply|last date|submission/.test(value)) return { type: 'fellowship-deadline', label: 'Fellowship deadline' };
+  if (/deadline|due date|due by/.test(value)) return DATE_TYPE_BY_TYPE.get('general-deadline');
+  if (/conference|symposium|workshop|event/.test(value)) return DATE_TYPE_BY_TYPE.get('event-date');
+  return DATE_TYPE_BY_TYPE.get('detected-date');
 }
 
 function hasExplicitDateLabel(context = '') {
@@ -564,12 +649,12 @@ function hasExplicitDateLabel(context = '') {
 }
 
 export function calculateDateConfidence(candidate = {}) {
-  const type = candidate.type || classifyDateType(candidate.context || candidate.snippet);
-  const labelled = type !== 'Detected date' || hasExplicitDateLabel(candidate.context || candidate.snippet);
+  const typeRule = normaliseDateType(candidate.type) || classifyDateType(candidate.localLabel || candidate.context || candidate.snippet);
+  const labelled = typeRule.type !== 'detected-date' || hasExplicitDateLabel(candidate.localLabel || candidate.context || candidate.snippet);
   if (candidate.ambiguous) return 'low';
+  if (typeRule.type === 'tentative-publication' || candidate.precision === 'month') return labelled ? 'medium' : 'low';
   if (labelled && candidate.precision === 'day' && !candidate.yearInferred) return 'high';
   if (labelled && candidate.precision === 'day') return 'medium';
-  if (labelled && candidate.precision === 'month') return /expected start|joining|fellowship start/i.test(type) ? 'medium' : 'low';
   return 'low';
 }
 
@@ -579,52 +664,78 @@ function primaryPriority(type = '') {
 }
 
 export function isPrimaryDateType(date = {}) {
-  return Number.isFinite(primaryPriority(date.type || ''));
+  return Number.isFinite(primaryPriority(`${date.type || ''} ${date.displayLabel || date.title || ''}`));
 }
 
 export function isCalendarImportantDate(date = {}) {
-  const type = date.type || '';
+  const type = `${date.type || ''} ${date.displayLabel || date.title || ''}`;
   if (/publication|page updated/i.test(type)) return false;
   return isPrimaryDateType(date) || /opening|results/i.test(type);
 }
 
 export function normaliseDetectedDate(candidate = {}, options = {}) {
   const pageId = options.pageId || candidate.pageId || 'draft';
-  const type = candidate.type || classifyDateType(candidate.context || candidate.snippet);
+  const typeRule = normaliseDateType(candidate.type) || classifyDateType(candidate.localLabel || candidate.context || candidate.snippet || candidate.displayLabel);
+  const type = typeRule.type;
+  const displayLabel = candidate.displayLabel || candidate.title || typeRule.label || 'Detected date';
   const confidence = candidate.confidence || calculateDateConfidence({ ...candidate, type });
-  const date = candidate.date instanceof Date ? isoDate(candidate.date) : String(candidate.date || '');
+  const preciseDate = candidate.date instanceof Date ? isoDate(candidate.date) : String(candidate.date || '');
   const endDate = candidate.endDate instanceof Date ? isoDate(candidate.endDate) : String(candidate.endDate || '');
-  const snippet = cleanText(candidate.snippet || candidate.context || '').slice(0, 260);
-  const time = candidate.time || '';
-  const timeZone = candidate.timeZone || '';
+  const parsedDate = preciseDate ? parseReferenceDate(preciseDate) : null;
+  const year = Number(candidate.year || (parsedDate ? parsedDate.getFullYear() : 0)) || null;
+  const month = Number(candidate.month || (parsedDate ? parsedDate.getMonth() + 1 : 0)) || null;
+  const day = candidate.day === null ? null : (Number(candidate.day || (parsedDate ? parsedDate.getDate() : 0)) || null);
+  const precision = candidate.precision || candidate.datePrecision || (preciseDate ? 'day' : year && month ? 'month' : year ? 'year' : 'day');
+  const date = precision === 'day' ? preciseDate : '';
+  const snippet = cleanText(candidate.sourceText || candidate.snippet || candidate.sourceBlock || candidate.context || '').slice(0, 200);
+  const time = candidate.time || null;
+  const timeZone = candidate.timeZone || candidate.timezone || null;
+  const origin = candidate.origin || candidate.source || 'automatic';
+  const source = origin === 'manual' ? 'manual' : (candidate.source || 'automatic');
   const fingerprintSource = [
     pageId,
     cleanKey(type),
     date,
     endDate,
-    time,
-    cleanKey(snippet).slice(0, 160),
+    precision,
+    year || '',
+    month || '',
+    day ?? '',
+    time || '',
+    Number(candidate.sourceBlockIndex ?? 0),
+    cleanKey(snippet).slice(0, 120),
   ].join('|');
   const fingerprint = candidate.fingerprint || stableHash(fingerprintSource);
-  const needsConfirmation = confidence === 'low' || Boolean(candidate.ambiguous);
+  const needsConfirmation = confidence === 'low' || precision !== 'day' || Boolean(candidate.ambiguous);
 
   return {
     id: candidate.id || `date_${fingerprint}`,
     type,
-    date,
+    displayLabel,
+    title: displayLabel,
+    date: date || null,
     endDate,
-    datePrecision: candidate.precision || candidate.datePrecision || 'day',
+    year,
+    month,
+    day: precision === 'day' ? day : null,
+    precision,
+    datePrecision: precision,
     time,
     timeZone,
+    timezone: timeZone,
+    sourceText: snippet,
     snippet,
-    source: candidate.source || 'automatic',
+    sourceBlockIndex: Number(candidate.sourceBlockIndex ?? 0),
+    source,
+    origin,
     confidence,
     detectionStatus: needsConfirmation ? 'needs_confirmation' : 'detected',
-    detectedAutomatically: candidate.detectedAutomatically ?? true,
+    detectedAutomatically: candidate.detectedAutomatically ?? source !== 'manual',
     detectedAt: candidate.detectedAt || new Date().toISOString(),
     fingerprint,
     uncertain: candidate.uncertain ?? needsConfirmation,
     confirmed: candidate.confirmed ?? !needsConfirmation,
+    manuallyEdited: Boolean(candidate.manuallyEdited || source === 'manual'),
     completed: Boolean(candidate.completed),
     reminder: candidate.reminder || { inApp: isPrimaryDateType({ type }), browser: false },
   };
@@ -635,31 +746,54 @@ function equivalentDateKey(date = {}) {
     cleanKey(date.type || ''),
     date.date || '',
     date.endDate || '',
+    date.precision || date.datePrecision || '',
+    date.year || '',
+    date.month || '',
+    date.day ?? '',
+    date.time || '',
+  ].join('|');
+}
+
+function dateOnlyKey(date = {}) {
+  return [
+    date.date || '',
+    date.precision || date.datePrecision || '',
+    date.year || '',
+    date.month || '',
+    date.day ?? '',
     date.time || '',
   ].join('|');
 }
 
 function canUpdateAutomaticDate(date = {}) {
-  if (date.completed || date.confirmed || date.source === 'manual' || date.manuallyEdited) return false;
-  return date.source === 'automatic' || date.detectedAutomatically || date.uncertain;
+  if (date.completed || date.source === 'manual' || date.origin === 'manual' || date.manuallyEdited) return false;
+  return date.source === 'automatic' || date.detectedAutomatically || date.origin === 'automatic' || date.uncertain || date.confirmed;
 }
 
 export function deduplicateDates(existing = [], detected = [], options = {}) {
   const pageId = options.pageId || 'draft';
   const merged = (Array.isArray(existing) ? existing : []).map((item) => {
-    const source = item.source || (item.manuallyEdited ? 'manual' : item.detectedAutomatically ? 'automatic' : undefined);
-    return normaliseDetectedDate({ ...item, source: source || item.source || 'manual', detectedAutomatically: source === 'automatic' }, { pageId });
+    const source = item.source || item.origin || (item.manuallyEdited ? 'manual' : item.detectedAutomatically ? 'automatic' : undefined);
+    const inferredSource = source || (item.sourceText || item.snippet || item.fingerprint ? 'automatic' : 'manual');
+    return normaliseDetectedDate({
+      ...item,
+      source: inferredSource,
+      origin: item.origin || inferredSource,
+      detectedAutomatically: inferredSource === 'automatic',
+    }, { pageId });
   });
   const byFingerprint = new Map(merged.map((item) => [item.fingerprint, item]));
   const byEquivalent = new Map(merged.map((item) => [equivalentDateKey(item), item]));
+  const byDateOnly = new Map(merged.filter(canUpdateAutomaticDate).map((item) => [dateOnlyKey(item), item]));
 
   (Array.isArray(detected) ? detected : []).forEach((item) => {
     const normalised = normaliseDetectedDate(item, { pageId });
-    const match = byFingerprint.get(normalised.fingerprint) || byEquivalent.get(equivalentDateKey(normalised));
+    const match = byFingerprint.get(normalised.fingerprint) || byEquivalent.get(equivalentDateKey(normalised)) || byDateOnly.get(dateOnlyKey(normalised));
     if (!match) {
       merged.push(normalised);
       byFingerprint.set(normalised.fingerprint, normalised);
       byEquivalent.set(equivalentDateKey(normalised), normalised);
+      if (canUpdateAutomaticDate(normalised)) byDateOnly.set(dateOnlyKey(normalised), normalised);
       return;
     }
 
@@ -675,13 +809,14 @@ export function deduplicateDates(existing = [], detected = [], options = {}) {
     if (index >= 0) merged[index] = updated;
     byFingerprint.set(updated.fingerprint, updated);
     byEquivalent.set(equivalentDateKey(updated), updated);
+    if (canUpdateAutomaticDate(updated)) byDateOnly.set(dateOnlyKey(updated), updated);
   });
 
   return merged.slice(0, 60);
 }
 
 function dedupeDetectedDates(detected = [], pageId = 'draft') {
-  return deduplicateDates([], detected, { pageId }).filter((date) => date.date || date.uncertain);
+  return deduplicateDates([], detected, { pageId }).filter((date) => date.date || date.precision === 'month' || date.uncertain);
 }
 
 export function extractImportantDates(input = {}, options = {}) {
@@ -708,14 +843,14 @@ export function selectNextImportantDate(dates = [], options = {}) {
   const today = startOfDay(options.now || new Date());
   const includeOverdue = Boolean(options.includeOverdue);
   return [...(Array.isArray(dates) ? dates : [])]
-    .filter((date) => date?.date && !date.completed && Number.isFinite(primaryPriority(date.type || '')))
+    .filter((date) => date?.date && !date.completed && Number.isFinite(primaryPriority(`${date.type || ''} ${date.displayLabel || date.title || ''}`)))
     .filter((date) => {
       if (includeOverdue) return true;
       const end = parseReferenceDate(date.endDate || date.date);
       return end && end.getTime() >= today.getTime();
     })
     .sort((a, b) => {
-      const priority = primaryPriority(a.type || '') - primaryPriority(b.type || '');
+      const priority = primaryPriority(`${a.type || ''} ${a.displayLabel || a.title || ''}`) - primaryPriority(`${b.type || ''} ${b.displayLabel || b.title || ''}`);
       if (priority !== 0) return priority;
       return String(a.date).localeCompare(String(b.date));
     })[0] || null;
@@ -728,13 +863,17 @@ export function daysUntilDate(dateValue, now = new Date()) {
 }
 
 export function formatDetectedDate(date = {}) {
+  if (!date?.date && (date.precision === 'month' || date.datePrecision === 'month') && date.year && date.month) {
+    const monthDate = makeDate(date.year, Number(date.month) - 1, 1);
+    return monthDate ? new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(monthDate) : 'Exact date not published';
+  }
   if (!date?.date) return 'Unconfirmed';
   const start = parseReferenceDate(date.date);
   const end = parseReferenceDate(date.endDate);
   if (!start) return date.date;
   const formatter = new Intl.DateTimeFormat(undefined, {
     day: date.datePrecision === 'month' ? undefined : 'numeric',
-    month: 'short',
+    month: 'long',
     year: 'numeric',
   });
   const startLabel = formatter.format(start);
@@ -742,7 +881,7 @@ export function formatDetectedDate(date = {}) {
   if (end && date.endDate && date.endDate !== date.date) {
     const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
     label = sameMonth
-      ? `${start.getDate()}-${end.getDate()} ${new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(start)}`
+      ? `${start.getDate()}-${end.getDate()} ${new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(start)}`
       : `${startLabel} - ${formatter.format(end)}`;
   }
   const timeBits = [date.time, date.timeZone].filter(Boolean).join(' ');

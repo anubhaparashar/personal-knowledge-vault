@@ -35,6 +35,8 @@ import {
 } from '../utils/content';
 import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { DATE_ANALYSIS_VERSION, deduplicateDates, formatDetectedDate, migrateLegacyPageDates } from '../utils/dates';
+import { detectExternalUrls, readAutoEnrichPastedLinksMode } from '../utils/sourceLinks';
+import { categoryEntryType, PRELOAD_KEY as EDITOR_PRELOAD_KEY } from '../utils/manualEntry';
 import {
   CATEGORY_OPTIONS,
   deadlineStatus,
@@ -59,7 +61,75 @@ const EMPTY_SOURCE_METADATA = {
   publicationDate: '',
   description: '',
   canonicalUrl: '',
+  originalUrl: '',
+  resolvedUrl: '',
+  publisher: '',
+  journalTitle: '',
+  institution: '',
+  conference: '',
+  funder: '',
+  applicationUrl: '',
+  lastChecked: '',
+  enrichmentStatus: '',
+  enrichmentMessage: '',
 };
+
+const EMPTY_OPPORTUNITY_DETAILS = {
+  institution: '',
+  department: '',
+  laboratory: '',
+  principalInvestigator: '',
+  conferenceName: '',
+  venue: '',
+  country: '',
+  location: '',
+  remoteStatus: '',
+  applicationUrl: '',
+  eligibility: '',
+  funding: '',
+  contactPerson: '',
+  contactEmail: '',
+  notes: '',
+};
+
+const OPPORTUNITY_FIELD_LABELS = {
+  institution: 'Institution',
+  department: 'Department or laboratory',
+  laboratory: 'Laboratory',
+  principalInvestigator: 'Principal investigator',
+  conferenceName: 'Conference name',
+  venue: 'Venue',
+  country: 'Country',
+  location: 'Location',
+  remoteStatus: 'Remote status',
+  applicationUrl: 'Application URL',
+  eligibility: 'Eligibility',
+  funding: 'Funding or salary',
+  contactPerson: 'Contact person',
+  contactEmail: 'Contact email',
+  notes: 'Notes',
+  problem: 'Problem',
+  proposedSystem: 'Proposed product or system',
+  intendedUsers: 'Intended users',
+  possibleFeatures: 'Possible features',
+  technologies: 'Technologies',
+  relatedSourcePost: 'Related source post',
+  feasibilityNotes: 'Feasibility notes',
+  priority: 'Priority',
+  projectStatus: 'Status',
+  researchProblem: 'Research problem',
+  researchGap: 'Research gap',
+  hypothesis: 'Hypothesis',
+  proposedMethod: 'Proposed method',
+  dataset: 'Dataset',
+  experiments: 'Experiments',
+  targetVenue: 'Target venue',
+  supportingSources: 'Supporting sources',
+};
+
+const LONG_OPPORTUNITY_FIELDS = new Set(['eligibility', 'funding', 'notes', 'problem', 'proposedSystem', 'intendedUsers', 'possibleFeatures', 'technologies', 'relatedSourcePost', 'feasibilityNotes', 'researchProblem', 'researchGap', 'hypothesis', 'proposedMethod', 'dataset', 'experiments', 'targetVenue', 'supportingSources']);
+const URL_OPPORTUNITY_FIELDS = new Set(['applicationUrl']);
+const EMAIL_OPPORTUNITY_FIELDS = new Set(['contactEmail']);
 
 const SUPPORTED_FORMATS = 'PDF, DOC, DOCX, TXT, Markdown, CSV, ZIP, PNG, JPG/JPEG and WEBP';
 const FILE_ACCEPT = '.pdf,.doc,.docx,.txt,.md,.markdown,.csv,.zip,.png,.jpg,.jpeg,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,application/zip,image/png,image/jpeg,image/webp';
@@ -69,8 +139,48 @@ const FIRESTORE_WARN_BYTES = 800 * 1024;
 const FIRESTORE_BLOCK_BYTES = 950 * 1024;
 const PAGE_TOO_LARGE_MESSAGE = 'This page is too large for one Firestore document. Split it into multiple knowledge pages.';
 const DOCUMENT_SIZE_ERROR_CODE = 'document-size-exceeded';
-const DRAFT_PRELOAD_KEY = 'kv-editor-preload';
+const DRAFT_PRELOAD_KEY = EDITOR_PRELOAD_KEY;
 
+const SOURCE_ENRICHMENT_LABELS = {
+  'not-started': 'Not started',
+  'link-detected': 'Link detected',
+  resolving: 'Resolving link',
+  reading: 'Reading source',
+  enriched: 'Enriched successfully',
+  partial: 'Partially enriched',
+  blocked: 'Source blocked',
+  failed: 'Failed',
+};
+
+const EMPTY_SOURCE_ENRICHMENT = {
+  status: 'not-started',
+  message: '',
+  originalUrl: '',
+  resolvedUrl: '',
+  canonicalUrl: '',
+  sourceName: '',
+  lastChecked: '',
+  suggestedTitle: '',
+  conflicts: [],
+};
+
+function sourceStatusLabel(status = 'not-started') {
+  return SOURCE_ENRICHMENT_LABELS[status] || SOURCE_ENRICHMENT_LABELS['not-started'];
+}
+
+function inferPublisherFromJournal(journalTitle = '') {
+  return /acm transactions on multimedia computing/i.test(journalTitle)
+    ? 'Association for Computing Machinery'
+    : '';
+}
+function isLinkedInUrl(value = '') {
+  try {
+    const host = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+    return host === 'lnkd.in' || host.endsWith('linkedin.com');
+  } catch {
+    return false;
+  }
+}
 function cleanVisibleText(value = '') {
   return String(value).replace(/<!--\s*SOURCE-CONTENT-(BEGIN|END)\s*-->/gi, '').trim();
 }
@@ -166,7 +276,11 @@ function hasSourceMetadata(metadata = {}) {
   return Object.values(metadata || {}).some((value) => String(value || '').trim());
 }
 
-function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata) {
+function hasOpportunityDetails(details = {}) {
+  return Object.values(details || {}).some((value) => String(value || '').trim());
+}
+
+function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}) {
   return Boolean(
     form.title.trim()
     || form.category.trim()
@@ -177,7 +291,8 @@ function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceM
     || attachments.length
     || inlineFiles.length
     || importantDates.length
-    || hasSourceMetadata(sourceMetadata),
+    || hasSourceMetadata(sourceMetadata)
+    || hasOpportunityDetails(opportunityDetails),
   );
 }
 
@@ -212,15 +327,58 @@ function mergeImportantDates(existing = [], detected = [], pageId = 'draft') {
 
 function sourceMetadataFromImport(imported = {}, sourceUrl = '') {
   const metadata = imported.metadata || {};
+  const resolvedUrl = metadata.resolvedUrl || imported.resolvedUrl || imported.finalUrl || imported.url || sourceUrl;
+  const canonicalUrl = metadata.canonicalUrl || imported.canonicalUrl || resolvedUrl || sourceUrl;
   return {
-    sourceName: metadata.sourceName || metadata.siteName || metadata.publisher || '',
+    sourceName: metadata.sourceName || metadata.siteName || metadata.publisher || (canonicalUrl ? getSourceDomain(canonicalUrl) : ''),
     author: metadata.author || '',
     publicationDate: metadata.publicationDate || metadata.publishedTime || metadata.datePublished || '',
     description: metadata.description || imported.description || '',
-    canonicalUrl: metadata.canonicalUrl || imported.canonicalUrl || sourceUrl,
+    canonicalUrl,
+    originalUrl: metadata.originalUrl || imported.originalUrl || sourceUrl,
+    resolvedUrl,
+    publisher: metadata.publisher || '',
+    journalTitle: metadata.journal || metadata.journalTitle || imported.journalTitle || '',
+    institution: metadata.institution || imported.institution || '',
+    conference: metadata.conference || imported.conference || '',
+    funder: metadata.funder || imported.funder || '',
+    applicationUrl: metadata.applicationUrl || imported.applicationUrl || '',
+    lastChecked: imported.checkedAt || new Date().toISOString(),
+    enrichmentStatus: imported.partial || imported.extractionBlocked ? 'partial' : 'enriched',
+    enrichmentMessage: imported.metadata?.platformMessage || imported.summary || '',
   };
 }
 
+function sourceEnrichmentFromMetadata(metadata = {}, fallbackUrl = '') {
+  return {
+    ...EMPTY_SOURCE_ENRICHMENT,
+    status: metadata.enrichmentStatus || (metadata.canonicalUrl || metadata.resolvedUrl ? 'enriched' : 'not-started'),
+    message: metadata.enrichmentMessage || '',
+    originalUrl: metadata.originalUrl || fallbackUrl || '',
+    resolvedUrl: metadata.resolvedUrl || '',
+    canonicalUrl: metadata.canonicalUrl || '',
+    sourceName: metadata.sourceName || metadata.publisher || '',
+    lastChecked: metadata.lastChecked || '',
+  };
+}
+
+function dateConflictKey(date = {}) {
+  return String(date.type || date.title || '').trim().toLowerCase();
+}
+
+function findDateConflicts(existingDates = [], sourceDates = []) {
+  const existingByType = new Map();
+  existingDates.forEach((date) => {
+    if (!date?.date) return;
+    const key = dateConflictKey(date);
+    if (key && !existingByType.has(key)) existingByType.set(key, date);
+  });
+  return sourceDates
+    .filter((date) => date?.date)
+    .map((date) => ({ pasted: existingByType.get(dateConflictKey(date)), official: date }))
+    .filter(({ pasted, official }) => pasted && pasted.date !== official.date)
+    .map(({ pasted, official }) => ({ id: `${dateConflictKey(official)}:${pasted.date}:${official.date}`, pasted, official }));
+}
 function makeDeadlinePage(pageId, form, sourceMetadata) {
   return {
     id: pageId,
@@ -238,14 +396,19 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const { user } = useAuth();
   const fileInput = useRef(null);
   const importControllerRef = useRef(null);
+  const autoEnrichedSourceRef = useRef('');
   const uploadControllersRef = useRef(new Map());
   const leaveWarningRef = useRef('');
-  const isNew = routeId === 'new';
+  const isNew = routeId === 'new' || String(routeId || '').startsWith('new-');
   const pageId = useMemo(() => (isNew ? createPageId(user.uid) : routeId), [isNew, routeId, user.uid]);
   const draftKey = useMemo(() => getDraftStorageKey(user.uid, pageId), [pageId, user.uid]);
   const existing = pages.find((page) => page.id === routeId);
   const [form, setForm] = useState(EMPTY_FORM);
   const [sourceMetadata, setSourceMetadata] = useState(EMPTY_SOURCE_METADATA);
+  const [sourceEnrichment, setSourceEnrichment] = useState(EMPTY_SOURCE_ENRICHMENT);
+  const [detectedSourceUrls, setDetectedSourceUrls] = useState([]);
+  const [opportunityDetails, setOpportunityDetails] = useState(EMPTY_OPPORTUNITY_DETAILS);
+  const [recordOrigin, setRecordOrigin] = useState('manually-added');
   const [importantDates, setImportantDates] = useState([]);
   const [autoCategory, setAutoCategory] = useState({ category: '', confidence: 0 });
   const [categoryManuallyEdited, setCategoryManuallyEdited] = useState(false);
@@ -266,12 +429,14 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [saveStatus, setSaveStatus] = useState('Saved');
   const [importMessage, setImportMessage] = useState('');
   const [lastDetectedDates, setLastDetectedDates] = useState([]);
+  const [ignoredDateSuggestions, setIgnoredDateSuggestions] = useState(() => new Set());
   const [editingDateIds, setEditingDateIds] = useState(() => new Set());
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
   const [payloadWarning, setPayloadWarning] = useState('');
   const [connectionStatus, setConnectionStatus] = useState(getInitialConnectionStatus);
   const [draftPrompt, setDraftPrompt] = useState(null);
+  const [dateReanalysisPreview, setDateReanalysisPreview] = useState(null);
   const [draftAutosaveReady, setDraftAutosaveReady] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState(null);
   const [hasLocalChanges, setHasLocalChanges] = useState(false);
@@ -328,6 +493,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         html: preload?.html || '<p></p>',
       });
       setSourceMetadata(preload?.sourceMetadata || EMPTY_SOURCE_METADATA);
+      setSourceEnrichment(sourceEnrichmentFromMetadata(preload?.sourceMetadata || EMPTY_SOURCE_METADATA, preload?.sourceUrl || ''));
+      setDetectedSourceUrls([]);
+      autoEnrichedSourceRef.current = preload?.sourceUrl || '';
+      setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(preload?.opportunityDetails || {}) });
+      setRecordOrigin(preload?.origin || 'manually-added');
       setImportantDates(preload?.importantDates || []);
       setSecure(Boolean(preload?.secure));
       setUnlocked(true);
@@ -337,6 +507,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setMessage('');
       setImportMessage('');
       setLastDetectedDates([]);
+      setIgnoredDateSuggestions(new Set());
       setEditingDateIds(new Set());
       setPayloadWarning('');
       setSaveStatus('Saved');
@@ -362,6 +533,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setUnlocked(false);
       setForm(EMPTY_FORM);
       setSourceMetadata(EMPTY_SOURCE_METADATA);
+      setSourceEnrichment(EMPTY_SOURCE_ENRICHMENT);
+      setDetectedSourceUrls([]);
+      autoEnrichedSourceRef.current = '';
+      setOpportunityDetails(EMPTY_OPPORTUNITY_DETAILS);
+      setRecordOrigin(existing.origin || existing.createdOrigin || 'manually-added');
       setImportantDates([]);
       setAttachments([]);
       setInlineFiles([]);
@@ -377,6 +553,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         html: existing.html || '<p></p>',
       });
       setSourceMetadata(existing.sourceMetadata || EMPTY_SOURCE_METADATA);
+      setSourceEnrichment(sourceEnrichmentFromMetadata(existing.sourceMetadata || EMPTY_SOURCE_METADATA, existing.sourceUrl || ''));
+      setDetectedSourceUrls([]);
+      autoEnrichedSourceRef.current = existing.sourceUrl || existing.sourceMetadata?.originalUrl || '';
+      setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(existing.opportunityDetails || {}) });
+      setRecordOrigin(existing.origin || existing.createdOrigin || 'manually-added');
       const migratedDates = migrateLegacyPageDates(existing);
       setImportantDates(migratedDates.importantDates || existing.importantDates || []);
       setLastDetectedDates((migratedDates.importantDates || []).filter((item) => item.detectedAutomatically || item.source === 'automatic').slice(0, 4));
@@ -397,7 +578,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     if (!draftAutosaveReady || !hasLocalChanges) return undefined;
 
     const timeoutId = window.setTimeout(() => {
-      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata)) {
+      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails)) {
         clearStoredDraft(draftKey);
         setDraftSavedAt(null);
         return;
@@ -414,6 +595,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         inlineFiles,
         importantDates,
         sourceMetadata,
+        opportunityDetails,
+        recordOrigin,
         categoryManuallyEdited,
         savedAt,
       });
@@ -421,7 +604,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }, DRAFT_SAVE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, form, hasLocalChanges, importantDates, inlineFiles, pageId, routeId, secure, sourceMetadata]);
+  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, form, hasLocalChanges, importantDates, inlineFiles, opportunityDetails, pageId, recordOrigin, routeId, secure, sourceMetadata]);
 
   useEffect(() => {
     if (!unlocked || !hasLocalChanges) return undefined;
@@ -451,12 +634,60 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         };
         return JSON.stringify(next) === JSON.stringify(current) ? current : next;
       });
+      if (metadata.journalTitle) {
+        setSourceMetadata((current) => {
+          const next = {
+            ...current,
+            journalTitle: current.journalTitle || metadata.journalTitle,
+            publisher: current.publisher || inferPublisherFromJournal(metadata.journalTitle),
+          };
+          return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+        });
+      }
       setLastDetectedDates(metadata.importantDates);
       setImportantDates((current) => mergeImportantDates(current, metadata.importantDates, pageId));
     }, 900);
     return () => window.clearTimeout(timeoutId);
   }, [attachments, categoryManuallyEdited, form.category, form.html, form.sourceUrl, form.summary, form.tagsText, form.title, hasLocalChanges, pageId, sourceMetadata, unlocked]);
 
+  useEffect(() => {
+    if (!unlocked || secure) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      const urls = detectExternalUrls(htmlToText(form.html));
+      setDetectedSourceUrls(urls);
+      if (!urls.length) return;
+      if (urls.length > 1) {
+        setSourceEnrichment((current) => ({
+          ...current,
+          status: current.status === 'not-started' ? 'link-detected' : current.status,
+          message: 'Multiple source links detected. Choose the official source to enrich.',
+        }));
+        return;
+      }
+
+      const [detectedUrl] = urls;
+      if (!form.sourceUrl.trim()) {
+        markDirty();
+        setForm((current) => ({ ...current, sourceUrl: detectedUrl }));
+      }
+      if (autoEnrichedSourceRef.current === detectedUrl || importing) return;
+      autoEnrichedSourceRef.current = detectedUrl;
+      setSourceEnrichment((current) => ({
+        ...current,
+        status: 'link-detected',
+        message: 'Source link detected',
+        originalUrl: detectedUrl,
+      }));
+      const mode = readAutoEnrichPastedLinksMode();
+      if (mode === 'auto') {
+        setImportMessage('Source link detected. Reading source...');
+        enrichFromSourceUrl(detectedUrl, { detected: true });
+      } else {
+        setImportMessage('Link detected - Import source');
+      }
+    }, 450);
+    return () => window.clearTimeout(timeoutId);
+  }, [form.html, form.sourceUrl, importing, secure, unlocked]);
   const attachmentRows = useMemo(() => {
     const queuedKeys = new Set(uploadRows.map((row) => attachmentFileKey(row)).filter(Boolean));
     const storedRows = attachments
@@ -468,12 +699,18 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const inlineRows = useMemo(() => inlineFiles.map(createStoredRow), [inlineFiles]);
   const canUploadFiles = !secure;
   const sourceFacts = useMemo(() => [
+    ['Original shared URL', sourceMetadata.originalUrl || form.sourceUrl],
+    ['Resolved URL', sourceMetadata.resolvedUrl],
+    ['Canonical URL', sourceMetadata.canonicalUrl],
     ['Website/source name', sourceMetadata.sourceName],
+    ['Publisher', sourceMetadata.publisher],
+    ['Journal', sourceMetadata.journalTitle],
+    ['Institution', sourceMetadata.institution],
     ['Author', sourceMetadata.author],
     ['Publication date', sourceMetadata.publicationDate],
-    ['Canonical URL', sourceMetadata.canonicalUrl],
+    ['Application/submission URL', sourceMetadata.applicationUrl],
     ['Description', sourceMetadata.description],
-  ].filter(([, value]) => String(value || '').trim()), [sourceMetadata]);
+  ].filter(([, value]) => String(value || '').trim()), [form.sourceUrl, sourceMetadata]);
 
   function markDirty() {
     setHasLocalChanges(true);
@@ -515,6 +752,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   function updateSourceMetadata(name, value) {
     markDirty();
     setSourceMetadata((current) => ({ ...current, [name]: value }));
+  }
+
+  function updateOpportunityDetail(name, value) {
+    markDirty();
+    setOpportunityDetails((current) => ({ ...current, [name]: value }));
   }
 
   const updateUploadRow = (localId, patch) => {
@@ -705,6 +947,16 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         summary: current.summary.trim() ? current.summary : metadata.summary,
       };
     });
+    if (metadata.journalTitle) {
+      setSourceMetadata((current) => {
+        const next = {
+          ...current,
+          journalTitle: current.journalTitle || metadata.journalTitle,
+          publisher: current.publisher || inferPublisherFromJournal(metadata.journalTitle),
+        };
+        return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+      });
+    }
     setLastDetectedDates(metadata.importantDates);
     setImportantDates((current) => mergeImportantDates(current, metadata.importantDates, pageId));
   }
@@ -720,6 +972,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       html: decrypted.html || '<p></p>',
     });
     setSourceMetadata(decrypted.sourceMetadata || EMPTY_SOURCE_METADATA);
+    setSourceEnrichment(sourceEnrichmentFromMetadata(decrypted.sourceMetadata || EMPTY_SOURCE_METADATA, decrypted.sourceUrl || ''));
+    setDetectedSourceUrls([]);
+    autoEnrichedSourceRef.current = decrypted.sourceUrl || decrypted.sourceMetadata?.originalUrl || '';
     setImportantDates(decrypted.importantDates || []);
     setPassphrase(value);
     setUnlocked(true);
@@ -989,78 +1244,214 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     markDirty();
   }
 
-  async function importFromLink() {
+  function mergedSourceMetadata(current = {}, next = {}) {
+    return {
+      ...current,
+      sourceName: current.sourceName || next.sourceName || '',
+      author: current.author || next.author || '',
+      publicationDate: current.publicationDate || next.publicationDate || '',
+      description: current.description || next.description || '',
+      canonicalUrl: next.canonicalUrl || current.canonicalUrl || '',
+      originalUrl: next.originalUrl || current.originalUrl || '',
+      resolvedUrl: next.resolvedUrl || current.resolvedUrl || '',
+      publisher: current.publisher || next.publisher || '',
+      journalTitle: current.journalTitle || next.journalTitle || '',
+      institution: current.institution || next.institution || '',
+      conference: current.conference || next.conference || '',
+      funder: current.funder || next.funder || '',
+      applicationUrl: current.applicationUrl || next.applicationUrl || '',
+      lastChecked: next.lastChecked || current.lastChecked || '',
+      enrichmentStatus: next.enrichmentStatus || current.enrichmentStatus || '',
+      enrichmentMessage: next.enrichmentMessage || current.enrichmentMessage || '',
+    };
+  }
+
+  function sourceFailureMessage(error, sourceUrl) {
+    const raw = error?.message || 'Could not import this link.';
+    if (/URL import endpoint is not configured/i.test(raw)) return 'Source enrichment backend is not configured.';
+    if (/Sign in before source enrichment/i.test(raw)) return 'Sign in before source enrichment.';
+    if (isLinkedInUrl(sourceUrl)) return 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.';
+    return raw;
+  }
+
+  async function enrichFromSourceUrl(rawUrl, options = {}) {
     setMessage('');
     setImportMessage('');
     let sourceUrl;
     try {
-      sourceUrl = validateImportUrl(form.sourceUrl);
+      sourceUrl = validateImportUrl(rawUrl || form.sourceUrl);
     } catch (error) {
       setImportMessage(error.message);
+      setSourceEnrichment((current) => ({ ...current, status: 'failed', message: error.message }));
       return;
     }
 
-    if (htmlToText(form.html).trim()) {
-      const confirmed = window.confirm('Importing this link will replace the current editor content. Continue?');
-      if (!confirmed) {
-        setImportMessage('Import cancelled. Existing editor content was preserved.');
-        return;
-      }
-    }
+    const currentText = htmlToText(form.html);
+    markDirty();
+    setDetectedSourceUrls((current) => (current.includes(sourceUrl) ? current : [sourceUrl, ...current]));
+    setForm((current) => ({ ...current, sourceUrl }));
+    setSourceEnrichment((current) => ({
+      ...current,
+      status: 'resolving',
+      message: 'Source link detected. Reading source...',
+      originalUrl: sourceUrl,
+    }));
+    setImportMessage('Source link detected. Reading source...');
 
+    importControllerRef.current?.abort();
     const controller = new AbortController();
     importControllerRef.current = controller;
     setImporting(true);
     try {
+      setSourceEnrichment((current) => ({ ...current, status: 'reading', message: 'Reading source...', originalUrl: sourceUrl }));
       const imported = await importUrlContent(sourceUrl, { signal: controller.signal });
       const cleanHtml = sanitizeHtml(imported.html || htmlFromText(imported.text || ''));
       const importedText = imported.text || htmlToText(cleanHtml);
       const nextSourceMetadata = sourceMetadataFromImport(imported, sourceUrl);
+      const combinedText = [form.title, currentText, imported.title, importedText, imported.summary, nextSourceMetadata.description].filter(Boolean).join('\n\n');
       const metadata = generateSmartMetadata({
         pageId,
         title: imported.title || form.title,
-        html: cleanHtml,
-        text: importedText,
-        sourceUrl: nextSourceMetadata.canonicalUrl || sourceUrl,
-        summary: imported.summary || imported.description || nextSourceMetadata.description,
+        html: form.html,
+        text: combinedText,
+        sourceUrl: nextSourceMetadata.canonicalUrl || nextSourceMetadata.resolvedUrl || sourceUrl,
+        summary: form.summary || imported.summary || imported.description || nextSourceMetadata.description,
         tagsText: form.tagsText,
         sourceMetadata: nextSourceMetadata,
         category: form.category,
         tags: splitTagsText(form.tagsText),
       });
-      const detectedDates = metadata.importantDates.length ? metadata.importantDates : detectImportantDates({
+      const officialDates = detectImportantDates({
         pageId,
         title: imported.title || form.title,
         text: importedText,
         summary: imported.summary || imported.description || nextSourceMetadata.description,
-        sourceUrl: nextSourceMetadata.canonicalUrl || sourceUrl,
+        sourceUrl: nextSourceMetadata.canonicalUrl || nextSourceMetadata.resolvedUrl || sourceUrl,
         sourceMetadata: nextSourceMetadata,
-      }, { pageId });
+      }, { pageId }).map((date) => ({
+        ...date,
+        source: 'official-source',
+        sourceText: date.sourceText || date.snippet || '',
+        detectedAutomatically: true,
+      }));
+      const detectedDates = officialDates.length ? officialDates : (metadata.importantDates || []).map((date) => ({ ...date, source: 'automatic' }));
+      const conflicts = findDateConflicts(importantDates, officialDates);
+      const nextStatus = imported.partial || imported.extractionBlocked ? 'partial' : 'enriched';
+      const nextMessage = imported.partial || imported.extractionBlocked
+        ? (imported.metadata?.platformMessage || 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.')
+        : 'Source enriched. Official page retrieved.';
 
-      setSourceMetadata(nextSourceMetadata);
+      setSourceMetadata((current) => mergedSourceMetadata(current, nextSourceMetadata));
+      setRecordOrigin((current) => current === 'manually-added' && options.detected ? 'manually-added' : current || 'manually-added');
       setAutoCategory({ category: metadata.category, confidence: metadata.categoryConfidence });
-      setCategoryManuallyEdited(false);
       setLastDetectedDates(detectedDates);
       setImportantDates((current) => mergeImportantDates(current, detectedDates, pageId));
-      setForm((current) => ({
-        ...current,
-        title: current.title.trim() ? current.title : (imported.title || current.title),
-        html: cleanHtml,
-        sourceUrl: nextSourceMetadata.canonicalUrl || sourceUrl,
-        category: metadata.category,
-        tagsText: mergeTags(splitTagsText(current.tagsText), metadata.tags).join(', '),
-        summary: cleanVisibleText(imported.summary || current.summary || metadata.summary || nextSourceMetadata.description || ''),
-      }));
-      setEditorRevision((current) => current + 1);
-      markDirty();
-      setImportMessage(detectedDates.length ? `Imported link content into the editor. Detected ${detectedDates.length} important date(s).` : 'Imported link content into the editor. No deadline detected.');
+      setSourceEnrichment({
+        ...EMPTY_SOURCE_ENRICHMENT,
+        status: nextStatus,
+        message: nextMessage,
+        originalUrl: sourceUrl,
+        resolvedUrl: nextSourceMetadata.resolvedUrl || '',
+        canonicalUrl: nextSourceMetadata.canonicalUrl || '',
+        sourceName: nextSourceMetadata.sourceName || nextSourceMetadata.publisher || '',
+        lastChecked: nextSourceMetadata.lastChecked || '',
+        suggestedTitle: metadata.suggestedTitle || imported.title || '',
+        conflicts,
+      });
+      setForm((current) => {
+        const manualTags = splitTagsText(current.tagsText);
+        const shouldSetCategory = !categoryManuallyEdited || !current.category.trim() || current.category === 'Uncategorised';
+        return {
+          ...current,
+          sourceUrl,
+          title: current.title.trim() ? current.title : (metadata.suggestedTitle || imported.title || current.title),
+          category: shouldSetCategory ? metadata.category : current.category,
+          tagsText: mergeTags(manualTags, metadata.tags).join(', '),
+          summary: current.summary.trim() ? current.summary : cleanVisibleText(imported.summary || metadata.summary || nextSourceMetadata.description || ''),
+        };
+      });
+      if (metadata.journalTitle) {
+        setSourceMetadata((current) => ({ ...current, journalTitle: current.journalTitle || metadata.journalTitle, publisher: current.publisher || inferPublisherFromJournal(metadata.journalTitle) }));
+      }
+      setImportMessage(detectedDates.length ? `${nextMessage} Detected ${detectedDates.length} important date(s).` : nextMessage);
     } catch (error) {
-      if (error.name === 'AbortError') setImportMessage('Import cancelled.');
-      else setImportMessage(error.message || 'Could not import this link.');
+      if (error.name === 'AbortError') {
+        setImportMessage('Import cancelled.');
+        setSourceEnrichment((current) => ({ ...current, status: 'failed', message: 'Import cancelled.' }));
+      } else {
+        const displayMessage = sourceFailureMessage(error, sourceUrl);
+        const failedStatus = /LinkedIn did not allow/i.test(displayMessage) ? 'blocked' : 'failed';
+        setSourceMetadata((current) => ({
+          ...current,
+          originalUrl: current.originalUrl || sourceUrl,
+          enrichmentStatus: failedStatus === 'blocked' ? 'partial' : failedStatus,
+          enrichmentMessage: displayMessage,
+          lastChecked: new Date().toISOString(),
+        }));
+        setSourceEnrichment((current) => ({
+          ...current,
+          status: failedStatus,
+          message: displayMessage,
+          originalUrl: sourceUrl,
+          lastChecked: new Date().toISOString(),
+        }));
+        applyGeneratedMetadata({ sourceUrl, text: currentText, sourceMetadata: { ...sourceMetadata, originalUrl: sourceUrl } });
+        setImportMessage(displayMessage);
+      }
     } finally {
       importControllerRef.current = null;
       setImporting(false);
     }
+  }
+
+  function selectDetectedSourceUrl(url) {
+    let sourceUrl;
+    try {
+      sourceUrl = validateImportUrl(url);
+    } catch (error) {
+      setImportMessage(error.message);
+      return;
+    }
+    markDirty();
+    setForm((current) => ({ ...current, sourceUrl }));
+    setDetectedSourceUrls([sourceUrl]);
+    setSourceEnrichment((current) => ({ ...current, status: 'link-detected', message: 'Source link detected', originalUrl: sourceUrl }));
+    const mode = readAutoEnrichPastedLinksMode();
+    if (mode === 'auto') {
+      autoEnrichedSourceRef.current = sourceUrl;
+      enrichFromSourceUrl(sourceUrl, { detected: true });
+    } else {
+      setImportMessage('Link detected - Import source');
+    }
+  }
+
+  function enrichFromDetectedLink() {
+    const urls = detectExternalUrls(htmlToText(form.html));
+    setDetectedSourceUrls(urls);
+    if (!urls.length) {
+      setImportMessage('No external source URL detected in the editor content.');
+      setSourceEnrichment((current) => ({ ...current, status: 'not-started', message: 'No external source URL detected.' }));
+      return;
+    }
+    if (urls.length > 1) {
+      setImportMessage('Choose a detected source link to enrich.');
+      setSourceEnrichment((current) => ({ ...current, status: 'link-detected', message: 'Multiple source links detected. Choose the official source to enrich.' }));
+      return;
+    }
+    selectDetectedSourceUrl(urls[0]);
+  }
+
+  function recheckSource() {
+    const sourceUrl = form.sourceUrl || sourceMetadata.originalUrl || sourceMetadata.canonicalUrl || sourceMetadata.resolvedUrl;
+    if (!sourceUrl) {
+      enrichFromDetectedLink();
+      return;
+    }
+    enrichFromSourceUrl(sourceUrl, { recheck: true });
+  }
+
+  async function importFromLink() {
+    await enrichFromSourceUrl(form.sourceUrl, { manual: true });
   }
 
   function cancelImport() {
@@ -1075,6 +1466,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setInlineFiles(Array.isArray(draftPrompt.inlineFiles) ? draftPrompt.inlineFiles : []);
     setImportantDates(Array.isArray(draftPrompt.importantDates) ? draftPrompt.importantDates : []);
     setSourceMetadata(draftPrompt.sourceMetadata || EMPTY_SOURCE_METADATA);
+    setSourceEnrichment(sourceEnrichmentFromMetadata(draftPrompt.sourceMetadata || EMPTY_SOURCE_METADATA, draftPrompt.form?.sourceUrl || ''));
+    setDetectedSourceUrls([]);
+    autoEnrichedSourceRef.current = draftPrompt.form?.sourceUrl || draftPrompt.sourceMetadata?.originalUrl || '';
+    setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(draftPrompt.opportunityDetails || {}) });
+    setRecordOrigin(draftPrompt.recordOrigin || 'manually-added');
     setCategoryManuallyEdited(Boolean(draftPrompt.categoryManuallyEdited));
     setUploadRows([]);
     setUnlocked(true);
@@ -1128,11 +1524,62 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setImportantDates((current) => current.filter((item) => item.id !== id));
   }
 
-  function addDeadline() {
+  function deadlineLabel(deadline = {}) {
+    return deadline.displayLabel || deadline.title || deadline.type || 'Important date';
+  }
+
+  function dateCompareKey(date = {}) {
+    return [date.date || '', date.precision || date.datePrecision || '', date.year || '', date.month || '', date.day ?? '', date.time || ''].join('|');
+  }
+
+  function canReplaceInReanalysis(date = {}) {
+    return !(date.source === 'manual' || date.origin === 'manual' || date.manuallyEdited);
+  }
+
+  function prepareDateReanalysis() {
+    const metadata = generateSmartMetadata({
+      pageId,
+      title: form.title,
+      html: form.html,
+      sourceUrl: form.sourceUrl,
+      summary: form.summary,
+      tagsText: form.tagsText,
+      sourceMetadata,
+      category: form.category,
+      tags: splitTagsText(form.tagsText),
+      fileName: attachments.map((item) => item.name || item.originalName).filter(Boolean).join(' '),
+    });
+    const detected = metadata.importantDates || [];
+    const merged = deduplicateDates(importantDates, detected, { pageId }).map((item) => ({ ...item, status: deadlineStatus(item) }));
+    const changes = [];
+    detected.forEach((detectedDate) => {
+      const old = importantDates.find((date) => canReplaceInReanalysis(date) && dateCompareKey(date) === dateCompareKey(detectedDate));
+      if (old && (old.type !== detectedDate.type || deadlineLabel(old) !== deadlineLabel(detectedDate))) {
+        changes.push({ kind: 'corrected', from: old, to: detectedDate });
+      } else if (!old && !importantDates.some((date) => dateCompareKey(date) === dateCompareKey(detectedDate))) {
+        changes.push({ kind: 'added', to: detectedDate });
+      }
+    });
+    setLastDetectedDates(detected);
+    setDateReanalysisPreview({ detected, merged, changes });
+    if (!changes.length) setMessage('Date reanalysis found no automatic corrections to apply.');
+  }
+
+  function applyDateReanalysis() {
+    if (!dateReanalysisPreview) return;
+    setImportantDates(finalImportantDates(dateReanalysisPreview.merged));
+    setDateReanalysisPreview(null);
+    markDirty();
+    setMessage('Date corrections applied. Review and save the page to persist them.');
+  }
+
+  function addDeadline(typeOverride = '') {
+    const template = categoryEntryType(form.category);
+    const dateType = typeOverride || template.dateTypes?.[0] || 'Personal reminder';
     const next = {
       id: crypto.randomUUID(),
-      type: 'Personal reminder',
-      title: 'Personal reminder',
+      type: dateType,
+      title: dateType,
       date: '',
       time: '',
       endDate: '',
@@ -1171,6 +1618,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   }
   async function submit(event) {
     event.preventDefault();
+    const saveAction = event.nativeEvent?.submitter?.value || 'save';
     setMessage('');
     setPayloadWarning('');
     const plainText = htmlToText(form.html);
@@ -1195,7 +1643,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setImportantDates(dates);
 
     if (!form.title.trim()) return setMessage('Add a title.');
-    if (!plainText && !attachments.length) return setMessage('Add some content or an attachment.');
+    if (!plainText && !attachments.length && !dates.length && !hasOpportunityDetails(opportunityDetails)) return setMessage('Add content, an important date, structured details or an attachment.');
     if (secure && (attachments.length || inlineFiles.length || uploadRows.some((row) => row.storagePath || row.file))) return setMessage('Remove attachments before saving an encrypted secure note.');
     if (secure && passphrase.length < 12) return setMessage('Secure notes require a passphrase of at least 12 characters.');
     if (secure && isNew && passphrase !== confirmPassphrase) return setMessage('The two passphrases do not match.');
@@ -1221,6 +1669,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           importantDates: dates,
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
           sourceMetadata,
+          opportunityDetails,
+          origin: recordOrigin || 'manually-added',
         }, passphrase);
 
         data = {
@@ -1238,6 +1688,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           sourceMetadata: null,
           attachments: [],
           inlineFiles: [],
+          origin: recordOrigin || 'manually-added',
+          createdOrigin: recordOrigin || 'manually-added',
+          opportunityDetails: {},
           encryption,
         };
       } else {
@@ -1266,6 +1719,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           },
           attachments,
           inlineFiles,
+          opportunityDetails,
+          origin: recordOrigin || 'manually-added',
+          createdOrigin: recordOrigin || 'manually-added',
         };
       }
 
@@ -1295,6 +1751,30 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setConnectionStatus(navigator.onLine ? 'Online' : 'Offline');
       console.info('[EditorPage] save completed', { uid: user.uid, pageId, approximatePayloadBytes: payloadBytes });
       window.setTimeout(() => {
+        if (saveAction === 'save-add-another') {
+          localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify({
+            category: selectedCategory,
+            tagsText: tags.join(', '),
+            origin: 'manually-added',
+            opportunityDetails: {},
+          }));
+          window.location.hash = `#/edit/new-${Date.now()}`;
+          return;
+        }
+        if (saveAction === 'save-start-application') {
+          localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify({
+            title: `Application - ${form.title.trim()}`,
+            category: 'Applications/Application Documents',
+            tagsText: mergeTags(['Application'], tags).join(', '),
+            sourceUrl: form.sourceUrl.trim(),
+            summary: `Application workspace for ${form.title.trim()}.`,
+            html: `<p>Application workspace for <a href="#/read/${pageId}">${form.title.trim()}</a>.</p>`,
+            origin: 'manually-added',
+            opportunityDetails: { relatedOpportunityId: pageId, institution: opportunityDetails.institution || '' },
+          }));
+          window.location.hash = `#/edit/new-${Date.now()}`;
+          return;
+        }
         window.location.hash = `#/read/${pageId}`;
       }, 350);
     } catch (error) {
@@ -1372,11 +1852,122 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   function dateSourceLabel(deadline) {
     if (deadline.uncertain && !deadline.confirmed) return 'Needs confirmation';
     if (deadline.source === 'manual' || deadline.manuallyEdited) return 'Added manually';
+    if (deadline.source === 'official-source') return 'Detected from official source';
     if (deadline.confidence === 'medium') return 'Detected automatically';
     if (deadline.detectedAutomatically || deadline.source === 'automatic') return 'Detected automatically';
     return 'Saved date';
   }
 
+  function clearSourceConflict(conflictId) {
+    setSourceEnrichment((current) => ({
+      ...current,
+      conflicts: (current.conflicts || []).filter((conflict) => conflict.id !== conflictId),
+    }));
+  }
+
+  function useOfficialDate(conflict) {
+    markDirty();
+    setImportantDates((current) => {
+      const filtered = current.filter((date) => {
+        if (date.source === 'manual' || date.manuallyEdited) return true;
+        return dateConflictKey(date) !== dateConflictKey(conflict.official);
+      });
+      return mergeImportantDates(filtered, [{ ...conflict.official, confirmed: true, uncertain: false }], pageId);
+    });
+    clearSourceConflict(conflict.id);
+  }
+
+  function keepPastedDate(conflict) {
+    clearSourceConflict(conflict.id);
+  }
+
+  function saveBothDates(conflict) {
+    markDirty();
+    setImportantDates((current) => mergeImportantDates(current, [{ ...conflict.official, uncertain: true, confirmed: false }], pageId));
+    clearSourceConflict(conflict.id);
+  }
+
+  function renderDetectedSourceChoices() {
+    if (detectedSourceUrls.length <= 1) return null;
+    return (
+      <div className="detected-source-choice">
+        <strong>Source links detected</strong>
+        <span>Choose the official source to enrich.</span>
+        <div className="source-choice-list">
+          {detectedSourceUrls.map((url) => (
+            <button type="button" className="text-link" key={url} onClick={() => selectDetectedSourceUrl(url)}>{url}</button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderSourceEnrichmentStatus() {
+    const status = sourceEnrichment.status || 'not-started';
+    const originalUrl = sourceEnrichment.originalUrl || sourceMetadata.originalUrl || form.sourceUrl;
+    const resolvedUrl = sourceEnrichment.resolvedUrl || sourceMetadata.resolvedUrl;
+    const canonicalUrl = sourceEnrichment.canonicalUrl || sourceMetadata.canonicalUrl;
+    const sourceName = sourceEnrichment.sourceName || sourceMetadata.sourceName || sourceMetadata.publisher;
+    const lastChecked = sourceEnrichment.lastChecked || sourceMetadata.lastChecked;
+    const searchQuery = [form.title, sourceMetadata.journalTitle, sourceEnrichment.suggestedTitle].filter(Boolean).join(' ');
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery || originalUrl || 'official source')}`;
+    const enriched = status === 'enriched';
+    return (
+      <div className={`source-enrichment-status source-status-${status}`}>
+        <div className="source-status-head">
+          <div>
+            <strong>Source enrichment: {sourceStatusLabel(status)}</strong>
+            {enriched ? <span>Source enriched - Official page retrieved</span> : null}
+            {sourceEnrichment.message ? <span>{sourceEnrichment.message}</span> : null}
+          </div>
+          <div className="source-status-actions">
+            <button type="button" className="text-link" onClick={enrichFromDetectedLink}>Enrich from detected link</button>
+            <button type="button" className="text-link" onClick={recheckSource}>Recheck source</button>
+          </div>
+        </div>
+        {(originalUrl || resolvedUrl || canonicalUrl || sourceName || lastChecked) ? (
+          <dl className="source-status-grid">
+            {originalUrl ? <div><dt>Original shared URL</dt><dd>{originalUrl}</dd></div> : null}
+            {resolvedUrl ? <div><dt>Resolved URL</dt><dd>{resolvedUrl}</dd></div> : null}
+            {canonicalUrl ? <div><dt>Canonical URL</dt><dd>{canonicalUrl}</dd></div> : null}
+            {sourceName ? <div><dt>Source website</dt><dd>{sourceName}</dd></div> : null}
+            {lastChecked ? <div><dt>Last checked</dt><dd>{new Date(lastChecked).toLocaleString()}</dd></div> : null}
+          </dl>
+        ) : null}
+        {sourceEnrichment.suggestedTitle && sourceEnrichment.suggestedTitle !== form.title ? (
+          <div className="source-title-suggestion">
+            <span>Suggested title</span>
+            <strong>{sourceEnrichment.suggestedTitle}</strong>
+            <button type="button" className="text-link" onClick={() => update('title', sourceEnrichment.suggestedTitle)}>Use suggestion</button>
+          </div>
+        ) : null}
+        {(status === 'blocked' || status === 'partial' || status === 'failed') ? (
+          <div className="source-fallback-actions">
+            <button type="button" className="text-link" onClick={recheckSource}>Retry</button>
+            {originalUrl ? <a className="text-link" href={originalUrl} target="_blank" rel="noreferrer">Open original</a> : null}
+            <button type="button" className="text-link" onClick={() => setImportMessage('Paste the official source link in Original source URL, then choose Import from link.')}>Paste official source link</button>
+            <a className="text-link" href={searchUrl} target="_blank" rel="noreferrer">Search for official source</a>
+          </div>
+        ) : null}
+        {sourceEnrichment.conflicts?.length ? (
+          <div className="source-conflict-list">
+            <strong>Source date differs from pasted information</strong>
+            {sourceEnrichment.conflicts.map((conflict) => (
+              <article key={conflict.id}>
+                <span>Pasted information: {deadlineLabel(conflict.pasted)} - {formatDetectedDate(conflict.pasted)}</span>
+                <span>Official source: {deadlineLabel(conflict.official)} - {formatDetectedDate(conflict.official)}</span>
+                <div className="deadline-action-row">
+                  <button type="button" className="text-link" onClick={() => useOfficialDate(conflict)}>Use official date</button>
+                  <button type="button" className="text-link" onClick={() => keepPastedDate(conflict)}>Keep pasted date</button>
+                  <button type="button" className="text-link" onClick={() => saveBothDates(conflict)}>Save both for review</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   function renderDetectedDateSummary() {
     if (!lastDetectedDates.length) return null;
     return (
@@ -1384,9 +1975,117 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         <strong>Detected dates</strong>
         {lastDetectedDates.slice(0, 4).map((deadline) => (
           <span key={deadline.id || deadline.fingerprint}>
-            {deadline.type || 'Important date'} - {formatDetectedDate(deadline)}
+            {deadline.displayLabel || deadline.title || deadline.type || 'Important date'} - {formatDetectedDate(deadline)}
           </span>
         ))}
+      </div>
+    );
+  }
+
+  function renderSmartSuggestions() {
+    const metadata = generateSmartMetadata({
+      pageId,
+      title: form.title,
+      html: form.html,
+      sourceUrl: form.sourceUrl,
+      summary: form.summary,
+      tagsText: form.tagsText,
+      sourceMetadata,
+      category: form.category,
+      tags: splitTagsText(form.tagsText),
+      fileName: attachments.map((item) => item.name || item.originalName).filter(Boolean).join(' '),
+    });
+    const suggestedTags = metadata.tags.filter((tag) => !splitTagsText(form.tagsText).map((item) => item.toLowerCase()).includes(tag.toLowerCase()));
+    const showTitle = metadata.suggestedTitle && metadata.suggestedTitle !== form.title;
+    const showCategory = metadata.category && metadata.category !== 'Uncategorised' && metadata.category !== form.category;
+    const showSummary = metadata.summary && !form.summary.trim();
+    const showDates = (metadata.importantDates || []).filter((item) => item.date && !ignoredDateSuggestions.has(item.id || `${item.type}-${item.date}`)).slice(0, 4);
+    if (!showTitle && !showCategory && !suggestedTags.length && !showSummary && !showDates.length) return null;
+    return (
+      <section className="smart-suggestions-panel">
+        <h3>Smart suggestions</h3>
+        {showTitle ? (
+          <article>
+            <span>Suggested title</span>
+            <strong>{metadata.suggestedTitle}</strong>
+            <button type="button" className="text-link" onClick={() => { update('title', metadata.suggestedTitle); if (metadata.journalTitle) setSourceMetadata((current) => ({ ...current, journalTitle: metadata.journalTitle, publisher: current.publisher || inferPublisherFromJournal(metadata.journalTitle) })); }}>Accept</button>
+          </article>
+        ) : null}
+        {showCategory ? (
+          <article>
+            <span>Suggested category</span>
+            <strong>{metadata.category}</strong>
+            <button type="button" className="text-link" onClick={() => { setCategoryManuallyEdited(false); update('category', metadata.category); }}>Accept</button>
+          </article>
+        ) : null}
+        {suggestedTags.length ? (
+          <article>
+            <span>Suggested tags</span>
+            <strong>{suggestedTags.slice(0, 5).join(', ')}</strong>
+            <button type="button" className="text-link" onClick={() => update('tagsText', mergeTags(splitTagsText(form.tagsText), metadata.tags).join(', '))}>Accept</button>
+          </article>
+        ) : null}
+        {showSummary ? (
+          <article>
+            <span>Suggested summary</span>
+            <strong>{metadata.summary}</strong>
+            <button type="button" className="text-link" onClick={() => update('summary', metadata.summary)}>Accept</button>
+          </article>
+        ) : null}
+        {showDates.map((date) => (
+          <article key={date.id || `${date.type}-${date.date}`}>
+            <span>Detected date</span>
+            <strong>{date.displayLabel || date.title || date.type || 'Important date'} - {formatDetectedDate(date)}</strong>
+            <button type="button" className="text-link" onClick={() => { markDirty(); setImportantDates((current) => mergeImportantDates(current, [date], pageId)); }}>Accept</button>
+            <button type="button" className="text-link" onClick={() => { markDirty(); setImportantDates((current) => mergeImportantDates(current, [{ ...date, uncertain: false, confirmed: true }], pageId)); setEditingDateIds((current) => new Set([...current, date.id])); }}>Edit</button>
+            <button type="button" className="text-link danger-link" onClick={() => setIgnoredDateSuggestions((current) => new Set([...current, date.id || `${date.type}-${date.date}`]))}>Ignore</button>
+          </article>
+        ))}
+      </section>
+    );
+  }
+
+  function renderOpportunityDetails() {
+    const template = categoryEntryType(form.category);
+    const fields = [...new Set([...(template.visibleFields || []), ...Object.keys(opportunityDetails).filter((key) => opportunityDetails[key])])]
+      .filter((key) => OPPORTUNITY_FIELD_LABELS[key]);
+    if (!fields.length) return null;
+    return (
+      <section className="manual-opportunity-panel">
+        <div className="compact-section-head">
+          <div>
+            <h3>Manual entry details</h3>
+            <p>{template.label.replace(/^Add\s+/, '')} fields are shown first. You can still use the main editor for the full announcement text.</p>
+          </div>
+        </div>
+        <div className="manual-field-grid">
+          {fields.map((field) => {
+            const common = {
+              value: opportunityDetails[field] || '',
+              onChange: (event) => updateOpportunityDetail(field, event.target.value),
+              placeholder: OPPORTUNITY_FIELD_LABELS[field],
+            };
+            return (
+              <label key={field} className={`field-label ${LONG_OPPORTUNITY_FIELDS.has(field) ? 'full-span' : ''}`}>
+                {OPPORTUNITY_FIELD_LABELS[field]}
+                {LONG_OPPORTUNITY_FIELDS.has(field)
+                  ? <textarea rows="3" {...common} />
+                  : <input type={URL_OPPORTUNITY_FIELDS.has(field) ? 'url' : EMAIL_OPPORTUNITY_FIELDS.has(field) ? 'email' : 'text'} {...common} />}
+              </label>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  function renderCategoryDateShortcuts() {
+    const template = categoryEntryType(form.category);
+    const dateTypes = template.dateTypes || [];
+    if (!dateTypes.length) return null;
+    return (
+      <div className="date-shortcut-row">
+        {dateTypes.map((type) => <button key={type} type="button" className="text-link" onClick={() => addDeadline(type)}>+ {type}</button>)}
       </div>
     );
   }
@@ -1403,11 +2102,32 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           <details className="date-menu">
             <summary aria-label="Date actions"><Icon name="menu" size={18} /></summary>
             <div className="date-menu-content">
-              <button type="button" className="text-link" onClick={addDeadline}>Add date manually</button>
+              <button type="button" className="text-link" onClick={() => addDeadline()}>Add date manually</button>
+              <button type="button" className="text-link" onClick={prepareDateReanalysis}>Reanalyse Dates</button>
             </div>
           </details>
         </div>
+        {dateReanalysisPreview ? (
+          <div className="date-reanalysis-panel">
+            <strong>Date reanalysis preview</strong>
+            {dateReanalysisPreview.changes.length ? dateReanalysisPreview.changes.map((change, index) => (
+              <article key={`${change.kind}-${index}`}>
+                {change.kind === 'corrected' ? (
+                  <>
+                    <span>Current: {deadlineLabel(change.from)} - {formatDetectedDate(change.from)}</span>
+                    <span>Corrected: {deadlineLabel(change.to)} - {formatDetectedDate(change.to)}</span>
+                  </>
+                ) : <span>New: {deadlineLabel(change.to)} - {formatDetectedDate(change.to)}</span>}
+              </article>
+            )) : <p>No automatic date corrections found.</p>}
+            <div className="deadline-action-row">
+              <button type="button" className="button primary" disabled={!dateReanalysisPreview.changes.length} onClick={applyDateReanalysis}>Apply corrections</button>
+              <button type="button" className="button secondary" onClick={() => setDateReanalysisPreview(null)}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
         {renderDetectedDateSummary()}
+        {renderCategoryDateShortcuts()}
         {importantDates.length ? importantDates.map((deadline) => {
           const status = deadlineStatus(deadline);
           const isEditing = editingDateIds.has(deadline.id);
@@ -1417,8 +2137,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
               <article className={`detected-date-card ${status.toLowerCase().replace(/\s+/g, '-')}`} key={deadline.id}>
                 <div className="detected-date-icon"><Icon name={needsConfirmation ? 'calendarClock' : 'calendar'} size={18} /></div>
                 <div className="detected-date-main">
-                  <strong>{needsConfirmation ? `Possible ${deadline.type || 'important date'}` : deadline.type || 'Important date'}</strong>
+                  <strong>{needsConfirmation ? `Possible ${deadlineLabel(deadline)}` : deadlineLabel(deadline)}</strong>
                   <time dateTime={deadline.date || undefined}>{formatDetectedDate(deadline)}</time>
+                  {deadline.precision === 'month' || deadline.datePrecision === 'month' ? <small>Exact date not published</small> : null}
                   <small>{dateSourceLabel(deadline)}</small>
                   {(deadline.sourceText || deadline.snippet) ? <p>{deadline.sourceText || deadline.snippet}</p> : null}
                 </div>
@@ -1433,7 +2154,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           return (
             <article className={`date-edit-card ${status.toLowerCase().replace(/\s+/g, '-')}`} key={deadline.id}>
               <label className="field-label">Date title
-                <input value={deadline.title || deadline.type || ''} onChange={(event) => updateDeadline(deadline.id, { title: event.target.value }, { manual: true })} />
+                <input value={deadline.displayLabel || deadline.title || deadline.type || ''} onChange={(event) => updateDeadline(deadline.id, { displayLabel: event.target.value, title: event.target.value }, { manual: true })} />
               </label>
               <label className="field-label">Type
                 <input value={deadline.type || ''} onChange={(event) => updateDeadline(deadline.id, { type: event.target.value }, { manual: true })} />
@@ -1514,9 +2235,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
               <label className="field-label">Original source URL
                 <input type="url" value={form.sourceUrl} onChange={(event) => update('sourceUrl', event.target.value)} placeholder="https://..." />
               </label>
-              <button type="button" className="button primary" disabled={importing} onClick={importFromLink}>{importing ? 'Importing...' : 'Import from link'}</button>
+              <button type="button" className="button primary" disabled={importing} onClick={importFromLink}>{importing ? 'Reading...' : 'Import from link'}</button>
             </div>
-            {importMessage ? <p className={importMessage.includes('Imported') ? 'status-message' : 'form-error'}>{importMessage}</p> : null}
+            {renderDetectedSourceChoices()}
+            {renderSourceEnrichmentStatus()}
+            {importMessage ? <p className={['failed', 'blocked'].includes(sourceEnrichment.status) ? 'form-error' : 'status-message'}>{importMessage}</p> : null}
           </section>
 
           {!secure ? (
@@ -1620,14 +2343,21 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             <button type="button" className="button secondary" onClick={autoCategorise}>Suggest category and tags</button>
           </div>
 
+          {renderSmartSuggestions()}
+          {renderOpportunityDetails()}
           {renderImportantDates()}
 
           <section className="source-info-panel">
             <h3>Original source information</h3>
             <label className="field-label">Website/source name<input value={sourceMetadata.sourceName || ''} onChange={(event) => updateSourceMetadata('sourceName', event.target.value)} /></label>
+            <label className="field-label">Publisher<input value={sourceMetadata.publisher || ''} onChange={(event) => updateSourceMetadata('publisher', event.target.value)} /></label>
+            <label className="field-label">Journal or venue<input value={sourceMetadata.journalTitle || ''} onChange={(event) => updateSourceMetadata('journalTitle', event.target.value)} /></label>
+            <label className="field-label">Institution or organisation<input value={sourceMetadata.institution || ''} onChange={(event) => updateSourceMetadata('institution', event.target.value)} /></label>
             <label className="field-label">Author<input value={sourceMetadata.author || ''} onChange={(event) => updateSourceMetadata('author', event.target.value)} /></label>
             <label className="field-label">Publication date<input value={sourceMetadata.publicationDate || ''} onChange={(event) => updateSourceMetadata('publicationDate', event.target.value)} /></label>
+            <label className="field-label">Resolved URL<input type="url" value={sourceMetadata.resolvedUrl || ''} onChange={(event) => updateSourceMetadata('resolvedUrl', event.target.value)} /></label>
             <label className="field-label">Canonical URL<input type="url" value={sourceMetadata.canonicalUrl || ''} onChange={(event) => updateSourceMetadata('canonicalUrl', event.target.value)} /></label>
+            <label className="field-label">Application/submission URL<input type="url" value={sourceMetadata.applicationUrl || ''} onChange={(event) => updateSourceMetadata('applicationUrl', event.target.value)} /></label>
             <label className="field-label">Description<textarea rows="2" value={sourceMetadata.description || ''} onChange={(event) => updateSourceMetadata('description', event.target.value)} /></label>
             {sourceFacts.length ? <p className="small-note">Metadata is stored with the page and can be edited.</p> : null}
           </section>
@@ -1673,7 +2403,10 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           {payloadWarning ? <div className="save-warning-panel" role="status">{payloadWarning}</div> : null}
 
           <div className="save-action-row">
-            <button className="button primary full" disabled={saving}>{saving ? 'Saving...' : 'Save page'}</button>
+            <button className="button primary full" name="saveAction" value="save" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+            <button className="button secondary full" name="saveAction" value="save-start-application" disabled={saving}>Save and Start Application</button>
+            <button className="button secondary full" name="saveAction" value="save-add-another" disabled={saving}>Save and Add Another</button>
+            <button type="button" className="button secondary full" disabled={saving} onClick={() => { if (!hasLocalChanges || window.confirm('Discard unsaved changes?')) window.location.hash = '#/'; }}>Cancel</button>
             {message ? <div className="save-error-panel" role="alert">{message}</div> : null}
           </div>
           {!isNew ? <button type="button" className="button danger full" disabled={saving} onClick={deleteCurrent}>Delete page</button> : null}

@@ -15,6 +15,7 @@ import {
   GraduationCap,
   Grid2X2,
   Landmark,
+  LayoutGrid,
   Lightbulb,
   Link2,
   Lock,
@@ -22,9 +23,11 @@ import {
   Pin,
   Plus,
   Presentation,
+  RefreshCw,
   Trash2,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
+import NewEntryMenu from '../components/NewEntryMenu';
 import { requestCalendarAdd } from '../components/ResearchCalendar';
 import {
   Badge,
@@ -39,9 +42,29 @@ import {
 } from '../components/DashboardUI';
 import { useAuth } from '../context/AuthContext';
 import { removePage } from '../services/pages';
+import {
+  DISCOVERY_PROGRESS_LABELS,
+  DEFAULT_DISCOVERY_SETTINGS,
+  cancelDiscoveryRun,
+  discoveryAutomaticStatus,
+  formatDiscoveryTimestamp,
+  hasVerifiedDiscoveryScan,
+  isActiveDiscoveryRun,
+  isDiscoveryBackendConfigured,
+  nextScheduledScan,
+  originLabel,
+  originTone,
+  scanDiscoverySource,
+  startDiscoveryRun,
+  subscribeDiscoverySettings,
+  subscribeDiscoverySources,
+  subscribeDiscoveryStats,
+  subscribeLatestDiscoveryRun,
+} from '../services/discovery';
 import { formatDate } from '../utils/content';
 import { daysUntilDate, formatDetectedDate, isCalendarImportantDate, selectNextImportantDate } from '../utils/dates';
 import { buildResearchDateEvents, sortResearchPages } from '../utils/researchDates';
+import { entryTypeForFocus, openManualEntry } from '../utils/manualEntry';
 
 const LIBRARY_VIEW_KEY = 'aprv-library-view';
 const LIBRARY_SEARCH_KEY = 'kv-global-search';
@@ -55,7 +78,8 @@ const WORKSPACE_CARDS = [
   { key: 'Postdoctoral', label: 'Postdoctoral Opportunities', icon: FlaskConical, href: '#/postdoctoral', description: 'Postdoc roles and lab openings', terms: ['postdoc', 'postdoctoral', 'research fellow', 'research associate'] },
   { key: 'Conferences', label: 'Conference Calls and Deadlines', icon: Presentation, href: '#/conferences', description: 'CFPs, abstracts and submissions', terms: ['conference', 'cfp', 'abstract submission', 'camera ready'] },
   { key: 'Journals', label: 'Journal Calls and Special Issues', icon: FileText, href: '#/journals', description: 'Journal calls and special issues', terms: ['journal', 'special issue', 'manuscript'] },
-  { key: 'Ideas', label: 'Paper Ideas', icon: Lightbulb, href: '#/ideas', description: 'Research gaps and hypotheses', terms: ['idea', 'paper idea', 'hypothesis', 'future work'] },
+  { key: 'Ideas', label: 'Paper Ideas', icon: Lightbulb, href: '#/ideas', description: 'Research gaps and hypotheses', terms: ['paper idea', 'research gap', 'hypothesis', 'future work'] },
+  { key: 'ProjectIdeas', label: 'Project Ideas', icon: LayoutGrid, href: '#/project-ideas', description: 'Products, systems and buildable ideas', terms: ['project idea', 'product idea', 'prototype', 'proposed system', 'possible features'] },
   { key: 'Papers', label: 'Research Papers and Reading Notes', icon: FileText, href: '#/papers', description: 'Reading notes and literature', terms: ['paper', 'study', 'literature', 'reading note'] },
   { key: 'Fellowships', label: 'Fellowships and Grants', icon: Landmark, href: '#/fellowships', description: 'Fellowships, awards and grants', terms: ['fellowship', 'grant', 'funding call'] },
   { key: 'Applications', label: 'Applications', icon: ClipboardCheck, href: '#/applications', description: 'Submitted and draft applications', terms: ['application', 'apply', 'statement of purpose', 'cover letter'] },
@@ -70,6 +94,7 @@ const FOCUS_LABELS = {
   deadlines: 'Upcoming Deadlines',
   applications: 'Applications',
   ideas: 'Paper Ideas',
+  'project-ideas': 'Project Ideas',
   papers: 'Research Papers',
   literature: 'Literature Notes',
   projects: 'Research Projects',
@@ -125,6 +150,7 @@ function focusMatchesPage(page, focus) {
   if (!focus || focus === 'overview' || focus === 'notes' || focus === 'calendar') return true;
   if (focus === 'deadlines' || focus === 'submission-deadlines') return Boolean(selectNextImportantDate(page.importantDates || [], { includeOverdue: true }));
   if (focus === 'literature') return normalize(summarizeText(page)).includes('literature') || normalize(summarizeText(page)).includes('reading note');
+  if (focus === 'project-ideas') return normalize(summarizeText(page)).includes('project idea') || normalize(summarizeText(page)).includes('product idea') || normalize(summarizeText(page)).includes('prototype') || normalize(page.category || '').includes('project ideas');
   if (focus === 'projects') return normalize(summarizeText(page)).includes('project');
   if (focus === 'grants') return normalize(summarizeText(page)).includes('grant');
   if (focus === 'special-issues') return normalize(summarizeText(page)).includes('special issue');
@@ -204,12 +230,39 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const [archivedIds, setArchivedIds] = useState(() => readSet(ARCHIVED_KEY));
   const [dismissedReminders, setDismissedReminders] = useState(() => readSessionSet(REMINDER_DISMISS_KEY));
   const [notificationMessage, setNotificationMessage] = useState('');
+  const [discoverySettings, setDiscoverySettings] = useState(DEFAULT_DISCOVERY_SETTINGS);
+  const [discoverySources, setDiscoverySources] = useState([]);
+  const [latestDiscoveryRun, setLatestDiscoveryRun] = useState(null);
+  const [discoveryStats, setDiscoveryStats] = useState(null);
+  const [discoveryMessage, setDiscoveryMessage] = useState('');
+  const [selectedDiscoverySourceId, setSelectedDiscoverySourceId] = useState('');
+  const [runLogOpen, setRunLogOpen] = useState(false);
 
   useEffect(() => { localStorage.setItem(LIBRARY_SEARCH_KEY, search); }, [search]);
   useEffect(() => { localStorage.setItem(LIBRARY_VIEW_KEY, viewMode); }, [viewMode]);
   useEffect(() => { localStorage.setItem(librarySortStorageKey, sortMode); }, [librarySortStorageKey, sortMode]);
   useEffect(() => { saveSet(PINNED_KEY, pinnedIds); }, [pinnedIds]);
   useEffect(() => { saveSet(ARCHIVED_KEY, archivedIds); }, [archivedIds]);
+
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const unsubscribers = [
+      subscribeDiscoverySettings(user.uid, setDiscoverySettings, (err) => setDiscoveryMessage(err.message)),
+      subscribeDiscoverySources(user.uid, setDiscoverySources, (err) => setDiscoveryMessage(err.message)),
+      subscribeLatestDiscoveryRun(user.uid, setLatestDiscoveryRun, (err) => setDiscoveryMessage(err.message)),
+      subscribeDiscoveryStats(user.uid, setDiscoveryStats, (err) => setDiscoveryMessage(err.message)),
+    ];
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe?.());
+  }, [user?.uid]);
+
+  useEffect(() => {
+    const enabled = discoverySources.filter((source) => source.enabled !== false && !source.paused);
+    if (!enabled.length) {
+      setSelectedDiscoverySourceId('');
+      return;
+    }
+    if (!enabled.some((source) => source.id === selectedDiscoverySourceId)) setSelectedDiscoverySourceId(enabled[0].id);
+  }, [discoverySources, selectedDiscoverySourceId]);
 
   const activePages = useMemo(() => pages.filter((page) => !archivedIds.has(page.id)), [archivedIds, pages]);
   const researchEvents = useMemo(() => buildResearchDateEvents(activePages, { includeDerived: true }), [activePages]);
@@ -227,7 +280,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           date,
           days,
           status: statusForDeadline(deadline, days),
-          kind: deadline.type || page.category || 'Important date',
+          kind: deadline.displayLabel || deadline.title || deadline.type || page.category || 'Important date',
         };
       }))
     .sort((a, b) => {
@@ -324,6 +377,18 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const noDeadlineMode = deadlineTimeFilter === 'No deadline recorded';
   const deadlineRows = noDeadlineMode ? [] : filteredDeadlines.slice(0, 10);
   const noDeadlineRows = noDeadlineMode ? pagesWithoutDeadlines.slice(0, 10) : [];
+  const discoveryConfigured = isDiscoveryBackendConfigured();
+  const enabledSources = discoverySources.filter((source) => source.enabled !== false && !source.paused);
+  const enabledSourceCount = enabledSources.length;
+  const discoveryVerified = hasVerifiedDiscoveryScan(discoveryStats, discoverySources);
+  const automaticDiscoveryLabel = discoveryAutomaticStatus(discoverySettings, discoveryStats, discoverySources);
+  const discoveryRunStatus = latestDiscoveryRun?.status || 'idle';
+  const discoveryStatusLabel = latestDiscoveryRun?.currentStage || DISCOVERY_PROGRESS_LABELS[latestDiscoveryRun?.step] || DISCOVERY_PROGRESS_LABELS[discoveryRunStatus] || 'Idle';
+  const discoveryActive = isActiveDiscoveryRun(latestDiscoveryRun);
+  const currentActivity = discoveryActive ? (discoveryRunStatus === 'queued' ? 'Queued' : 'Running') : 'Idle';
+  const latestWarnings = Array.isArray(latestDiscoveryRun?.warningMessages) ? latestDiscoveryRun.warningMessages.length : (Array.isArray(latestDiscoveryRun?.warnings) ? latestDiscoveryRun.warnings.length : Number(latestDiscoveryRun?.warnings || discoveryStats?.warnings || 0));
+  const latestStats = latestDiscoveryRun?.stats || {};
+  const contextEntry = entryTypeForFocus(focus);
 
   function dismissReminder(id) {
     const next = new Set(dismissedReminders);
@@ -346,6 +411,67 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     visibleReminders.slice(0, 3).forEach((item) => {
       new Notification(`${item.kind}: ${item.page.title}`, { body: `${item.status} - ${item.deadline.date}` });
     });
+  }
+
+  async function runDiscovery(mode) {
+    setDiscoveryMessage('');
+    if (!isDiscoveryBackendConfigured()) {
+      setDiscoveryMessage('Manual scanning backend is not configured. Deploy the Firebase Functions and set the discovery endpoints.');
+      return;
+    }
+    if (isActiveDiscoveryRun(latestDiscoveryRun)) {
+      setDiscoveryMessage('A discovery scan is already running. Wait for it to finish before starting another.');
+      return;
+    }
+    if (mode === 'full' && latestDiscoveryRun?.completedAt) {
+      const completedAt = latestDiscoveryRun.completedAt?.toDate ? latestDiscoveryRun.completedAt.toDate() : new Date(latestDiscoveryRun.completedAt);
+      if (!Number.isNaN(completedAt.getTime()) && Date.now() - completedAt.getTime() < 30 * 60 * 1000) {
+        const confirmed = window.confirm('A discovery scan completed in the last 30 minutes. Start another full web scan?');
+        if (!confirmed) return;
+      }
+    }
+    try {
+      const result = await startDiscoveryRun(user, mode);
+      setDiscoveryMessage(result.runId ? `${mode === 'full' ? 'Full web scan' : 'Quick refresh'} started. Progress is read from the backend run record.` : 'Discovery run completed.');
+    } catch (error) {
+      setDiscoveryMessage(error.message || 'Could not start discovery.');
+    }
+  }
+
+  async function scanSelectedSource() {
+    setDiscoveryMessage('');
+    if (!isDiscoveryBackendConfigured()) {
+      setDiscoveryMessage('Manual scanning backend is not configured. Deploy the Firebase Functions and set the discovery endpoints.');
+      return;
+    }
+    if (!selectedDiscoverySourceId) {
+      setDiscoveryMessage('No enabled source is selected. Add or enable a source in Settings.');
+      return;
+    }
+    if (isActiveDiscoveryRun(latestDiscoveryRun)) {
+      setDiscoveryMessage('A discovery scan is already running. Wait for it to finish before scanning one source.');
+      return;
+    }
+    try {
+      const result = await scanDiscoverySource(user, selectedDiscoverySourceId);
+      setDiscoveryMessage(result.runId ? 'Single-source scan started. Progress is read from the backend run record.' : 'Single-source scan completed.');
+    } catch (error) {
+      setDiscoveryMessage(error.message || 'Could not scan this source.');
+    }
+  }
+
+  async function cancelQueuedRun() {
+    if (!latestDiscoveryRun?.id) return;
+    try {
+      await cancelDiscoveryRun(user, latestDiscoveryRun.id);
+      setDiscoveryMessage('Queued discovery scan cancelled.');
+    } catch (error) {
+      setDiscoveryMessage(error.message || 'Could not cancel this queued scan.');
+    }
+  }
+
+  function openContextEntry() {
+    openManualEntry(entryTypeForFocus(focus).id);
   }
   async function togglePin(page) {
     const next = new Set(pinnedIds);
@@ -373,6 +499,56 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
       <div className="dashboard-stack">
         {error ? <div className="alert-panel error"><strong>Library sync issue</strong><span>{error}</span></div> : null}
         {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
+
+        <SectionPanel className="dashboard-actions-panel discovery-control-centre" eyebrow="DISCOVERY" title="Discovery Control Centre" actions={(
+          <div className="control-centre-actions">
+            <NewEntryMenu onImportFromLink={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))} />
+            <SecondaryButton onClick={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))}><Link2 size={16} /> Scrape a Link</SecondaryButton>
+            <SecondaryButton disabled={!discoveryConfigured || discoveryActive} onClick={() => runDiscovery('quick')}><RefreshCw size={16} /> Quick Refresh</SecondaryButton>
+            <PrimaryButton disabled={!discoveryConfigured || discoveryActive} onClick={() => runDiscovery('full')}><RefreshCw size={16} /> Full Web Scan</PrimaryButton>
+            <label className="source-select-control"><span>Source</span><select value={selectedDiscoverySourceId} onChange={(event) => setSelectedDiscoverySourceId(event.target.value)} disabled={!enabledSources.length || discoveryActive}>{enabledSources.map((source) => <option key={source.id} value={source.id}>{source.name || source.url}</option>)}</select></label>
+            <SecondaryButton disabled={!discoveryConfigured || discoveryActive || !selectedDiscoverySourceId} onClick={scanSelectedSource}>Scan One Source</SecondaryButton>
+            <SecondaryButton as="a" href="#/settings">Manage Sources</SecondaryButton>
+            <SecondaryButton onClick={() => setRunLogOpen((value) => !value)}>View Run Log</SecondaryButton>
+          </div>
+        )}>
+          {!discoveryConfigured ? <div className="alert-panel warning"><strong>Manual scanning backend is not configured</strong><span>Deploy Firebase Functions and set the discovery endpoint variables before using manual web scans.</span></div> : null}
+          {!discoveryVerified ? <p className="form-error">Automatic discovery is not configured. A source-backed scan must complete successfully before this dashboard can show Enabled.</p> : null}
+          <p className="section-intro">Discovery coverage is based on enabled sources.</p>
+          <div className="discovery-status-grid">
+            <article><span>Automatic Discovery</span><strong>{automaticDiscoveryLabel}</strong></article>
+            <article><span>Last attempted scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastAttemptedScanAt || latestDiscoveryRun?.requestedAt || latestDiscoveryRun?.createdAt)}</strong></article>
+            <article><span>Last successful scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastSuccessfulScanAt)}</strong></article>
+            <article><span>Next scheduled scan</span><strong>{automaticDiscoveryLabel === 'Enabled' ? nextScheduledScan(discoverySettings) : automaticDiscoveryLabel}</strong></article>
+            <article><span>Current activity</span><strong>{currentActivity}</strong></article>
+            <article><span>Sources enabled</span><strong>{enabledSourceCount}</strong></article>
+            <article><span>Sources checked</span><strong>{latestDiscoveryRun?.sourcesChecked ?? latestStats.sourcesChecked ?? discoveryStats?.sourcesChecked ?? 0}</strong></article>
+            <article><span>New discoveries</span><strong>{latestDiscoveryRun?.recordsCreated ?? latestStats.newRecords ?? discoveryStats?.newRecords ?? 0}</strong></article>
+            <article><span>Updated discoveries</span><strong>{latestDiscoveryRun?.recordsUpdated ?? latestStats.updatedRecords ?? discoveryStats?.updatedRecords ?? 0}</strong></article>
+            <article><span>Duplicates skipped</span><strong>{latestDiscoveryRun?.duplicatesSkipped ?? latestStats.duplicates ?? discoveryStats?.duplicatesSkipped ?? 0}</strong></article>
+            <article><span>Warnings</span><strong>{latestWarnings}</strong></article>
+            <article><span>Failed sources</span><strong>{latestDiscoveryRun?.failures ?? latestStats.failures ?? discoveryStats?.failures ?? 0}</strong></article>
+          </div>
+          {discoveryActive ? <p className="status-message">{latestDiscoveryRun?.runType === 'manual-full' ? 'Full web scan in progress' : 'Discovery scan in progress'}{latestDiscoveryRun?.currentSource ? ` - ${latestDiscoveryRun.currentStage || 'Checking'}: ${latestDiscoveryRun.currentSource}` : ` - ${discoveryStatusLabel}`}</p> : null}
+          {!discoveryActive && latestDiscoveryRun ? <p className="status-message">Latest run: {discoveryStatusLabel}</p> : null}
+          {latestDiscoveryRun?.status === 'queued' ? <SecondaryButton onClick={cancelQueuedRun}>Cancel queued scan</SecondaryButton> : null}
+          {discoveryMessage ? <p className={discoveryMessage.includes('not configured') || discoveryMessage.includes('Could not') || discoveryMessage.includes('No enabled') ? 'form-error' : 'status-message'}>{discoveryMessage}</p> : null}
+          {!discoveryConfigured || !discoveryVerified ? <a className="button secondary" href="#/settings">View Setup Instructions</a> : null}
+          {runLogOpen ? (
+            <div className="run-log-panel">
+              <dl>
+                <div><dt>Run record</dt><dd>{latestDiscoveryRun?.id ? `users/${user?.uid}/discoveryRuns/${latestDiscoveryRun.id}` : 'No run record yet'}</dd></div>
+                <div><dt>Run type</dt><dd>{latestDiscoveryRun?.runType || 'Not recorded'}</dd></div>
+                <div><dt>Status</dt><dd>{latestDiscoveryRun?.status || 'Idle'}</dd></div>
+                <div><dt>Stage</dt><dd>{latestDiscoveryRun?.currentStage || discoveryStatusLabel}</dd></div>
+                <div><dt>Records found</dt><dd>{latestDiscoveryRun?.recordsFound ?? latestStats.recordsFound ?? 0}</dd></div>
+                <div><dt>Dates detected</dt><dd>{latestDiscoveryRun?.datesDetected ?? latestStats.datesDetected ?? 0}</dd></div>
+              </dl>
+              {Array.isArray(latestDiscoveryRun?.warningMessages) && latestDiscoveryRun.warningMessages.length ? <ul>{latestDiscoveryRun.warningMessages.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+            </div>
+          ) : null}
+          {focus !== 'overview' && focus !== 'notes' ? <button type="button" className="button secondary context-add-button" onClick={openContextEntry}>{contextEntry.shortLabel || contextEntry.label}</button> : null}
+        </SectionPanel>
 
         {visibleReminders.length ? (
           <SectionPanel className="reminder-panel" eyebrow="REMINDERS" title="Reminders" actions={<SecondaryButton onClick={enableBrowserNotifications}><Bell size={16} /> Enable browser reminders</SecondaryButton>}>
@@ -500,6 +676,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
                     <span className="category-pill">{page.secure ? 'Private Vault' : page.category || 'Uncategorised'}</span>
                     <div className="note-meta-row">
                       {pinned ? <Badge tone="pin">Pinned</Badge> : null}
+                      <Badge tone={originTone(page.origin || page.createdOrigin || 'manually-added')}>{originLabel(page.origin || page.createdOrigin || 'manually-added')}</Badge>
                       {deadline ? <Badge tone={deadlineTone(deadline.status)}>{deadline.status}</Badge> : null}
                     </div>
                   </div>
@@ -509,6 +686,16 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
                     {(page.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}
                     {attachmentCount ? <span><Paperclip size={12} /> {attachmentCount} file(s)</span> : null}
                   </div>
+                  {page.origin === 'auto-discovered' || page.origin === 'scholarly-api' ? (
+                    <div className="note-discovery-meta">
+                      <span>Source: {page.discovery?.sourceName || page.sourceDomain || 'Official source'}</span>
+                      <span>First discovered: {formatDiscoveryTimestamp(page.discovery?.firstDiscoveredAt)}</span>
+                      <span>Last checked: {formatDiscoveryTimestamp(page.discovery?.lastCheckedAt)}</span>
+                      <span>Relevance: {Math.round((page.discovery?.relevanceScore || 0) * 100)}%</span>
+                      <span>Date confidence: {Math.round((page.discovery?.dateConfidence || 0) * 100)}%</span>
+                      <span>Status: {page.discovery?.status || 'active'}</span>
+                    </div>
+                  ) : null}
                   {deadline ? (
                     <div className="note-next-date">
                       <CalendarClock size={15} />
