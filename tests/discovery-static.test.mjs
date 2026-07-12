@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import { extractImportantDates, formatDetectedDate, selectNextImportantDate } from '../src/utils/dates.js';
 import { detectExternalUrls } from '../src/utils/sourceLinks.js';
 import { generateSmartMetadata } from '../src/utils/intelligence.js';
+import {
+  buildLinkedInImportResult,
+  extractLinkedInPostFromHtml,
+  isLinkedInPostUrl,
+  normalizeLinkedInPostUrl,
+} from '../functions/linkedin-import.js';
 
 const results = [];
 
@@ -210,6 +216,65 @@ run('Pasted ACM TOMM LinkedIn shortlink is detected and classified for enrichmen
   assert.equal(new Set(dates.map((date) => `${date.title}:${date.date || date.year + '-' + date.month}`)).size, dates.length);
 });
 
+
+run('LinkedIn ACM TOMM fixture extracts only the main post and official source evidence', () => {
+  const fixture = read('tests/fixtures/linkedin-acm-tomm-post.html');
+  const url = 'https://www.linkedin.com/posts/imad-rida-phd-363a15b9_acm-tomm-cfp-responsible-explainable-multi-modal-fusion-activity-7460986095749693440-_0Ut?utm_source=social_share_send&utm_medium=member_desktop_web&rcm=ACoAAAsZkr4BdIT-5A6p4Yh4GWkUbsh57JTQgVQ';
+  const canonical = 'https://www.linkedin.com/posts/imad-rida-phd-363a15b9_acm-tomm-cfp-responsible-explainable-multi-modal-fusion-activity-7460986095749693440-_0Ut';
+  assert.equal(isLinkedInPostUrl(url), true);
+  assert.equal(normalizeLinkedInPostUrl(url), canonical);
+  assert.equal(normalizeLinkedInPostUrl(`${canonical}?utm_source=x&rcm=y`), canonical);
+
+  const post = extractLinkedInPostFromHtml(fixture, url);
+  assert.equal(post.author, 'Imad Rida, PhD');
+  assert.ok(post.text.includes('Journal: ACM Transactions on Multimedia Computing, Communications, and Applications'));
+  assert.ok(!post.text.includes('More Relevant Posts'));
+  assert.ok(!post.text.includes('January 1, 2030'));
+  assert.ok(post.links.some((link) => /ACM-TOMM-CFP-Responsible-Explainable-Multi-Modal-Fusion\.pdf/i.test(link.url)));
+
+  const result = buildLinkedInImportResult({ originalUrl: url, finalUrl: url, html: fixture });
+  assert.equal(result.sourcePlatform, 'linkedin');
+  assert.equal(result.sourceAuthor, 'Imad Rida, PhD');
+  assert.equal(result.canonicalUrl, canonical);
+  assert.equal(result.title, 'Towards Responsible and Explainable Multi-Modal Fusion \u2014 ACM TOMM Special Issue');
+  assert.equal(result.category, 'Publishing/Special Issues');
+  assert.equal(result.recordType, 'Journal special issue call for papers');
+  assert.equal(result.structured.journal, 'ACM Transactions on Multimedia Computing, Communications, and Applications');
+  assert.equal(result.structured.journalAbbreviation, 'ACM TOMM');
+  assert.equal(result.structured.publisher, 'Association for Computing Machinery');
+  assert.equal(result.structured.specialIssueTitle, 'Towards Responsible and Explainable Multi-Modal Fusion');
+  assert.deepEqual(result.structured.reportedJournalInfo, { impactFactor: '6', quartile: 'Q1', verificationStatus: 'Unverified external claim' });
+  assert.deepEqual(result.structured.guestEditors.map((editor) => editor.name), ['Lucia Cascone', 'Emanuela Marasco', 'Imad Rida']);
+  assert.equal(result.structured.topics.length, 15);
+  ['ACM TOMM', 'Special Issue', 'Multimodal Fusion', 'Responsible AI', 'Explainable AI', 'Multimodal LLMs', 'Privacy-Preserving Learning', 'Adversarial Robustness'].forEach((tag) => assert.ok(result.tags.includes(tag), `missing tag ${tag}`));
+  ['Learning', 'Journal ACM', 'Transactions Multimedia', 'Multi-modal Fusion.'].forEach((tag) => assert.ok(!result.tags.includes(tag), `bad tag ${tag}`));
+  assert.ok(result.officialPdf);
+  assert.equal(result.officialPdf.kind, 'pdf');
+
+  const dates = result.importantDates;
+  assert.equal(dates.length, 5);
+  const expected = [
+    ['submission-deadline', '2026-08-31', 'Submissions deadline: August 31, 2026'],
+    ['first-round-review-decision', '2026-10-31', 'First-round review decisions: October 31, 2026'],
+    ['revision-submission-deadline', '2026-12-15', 'Deadline for revision submissions: December 15, 2026'],
+    ['final-decision-notification', '2027-02-15', 'Notification of final decisions: February 15, 2027'],
+  ];
+  expected.forEach(([type, date, snippet], index) => {
+    assert.equal(dates[index].type, type);
+    assert.equal(dates[index].date, date);
+    assert.equal(dates[index].sourceText, snippet);
+    assert.ok(!dates[index].sourceText.includes('More Relevant Posts'));
+  });
+  const publication = dates[4];
+  assert.equal(publication.type, 'tentative-publication');
+  assert.equal(publication.year, 2027);
+  assert.equal(publication.month, 4);
+  assert.equal(publication.day, null);
+  assert.equal(publication.precision, 'month');
+  assert.equal(publication.sourceText, 'Tentative publication: April 2027');
+  assert.equal(dates[0].date, '2026-08-31');
+  assert.equal(new Set(dates.map((date) => `${date.type}:${date.date || date.year + '-' + date.month}`)).size, 5);
+});
 run('Editor and backend expose truthful pasted-link source enrichment states', () => {
   const editor = read('src/pages/EditorPage.jsx');
   const urlImport = read('src/services/urlImport.js');

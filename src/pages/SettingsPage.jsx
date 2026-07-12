@@ -175,12 +175,12 @@ export default function SettingsPage({ pages, pdfs = [] }) {
           </div>
           <label className="field-label">Automatically enrich pasted links
             <select value={autoEnrichPastedLinks} onChange={(event) => updateAutoEnrichPastedLinks(event.target.value)}>
-              <option value="auto">Automatically enrich</option>
-              <option value="ask">Ask before enrichment</option>
-              <option value="never">Never enrich automatically</option>
+              <option value="auto">Enabled</option>
+              <option value="ask">Ask first</option>
+              <option value="never">Disabled</option>
             </select>
           </label>
-          <p className="small-note">Even when automatic enrichment is disabled, the editor still shows Link detected - Import source.</p>
+          <p className="small-note">Even when automatic enrichment is disabled, the editor still shows Link detected - Analyse source.</p>
           <div className="settings-action-row">
             <button className="button primary" type="button" disabled={!installPrompt && !/available/i.test(installStatus)} onClick={installPwa}>Install AP Research Vault</button>
             <a className="button secondary" href="#/shared-inbox">Open Shared Inbox</a>

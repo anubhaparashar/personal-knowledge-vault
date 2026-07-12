@@ -8,7 +8,14 @@ import { logger } from 'firebase-functions';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import sanitizeHtml from 'sanitize-html';
-
+import pdfParse from 'pdf-parse';
+import {
+  buildLinkedInImportResult,
+  detectOfficialPdfLinks,
+  isLinkedInPostUrl,
+  isLinkedInUrl,
+  normalizeLinkedInPostUrl,
+} from './linkedin-import.js';
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 const FieldValue = admin.firestore.FieldValue;
@@ -16,6 +23,10 @@ const TZ = 'Asia/Kolkata';
 const MAX_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 12000;
 const MAX_REDIRECTS = 5;
+const MAX_PDF_BYTES = 8 * 1024 * 1024;
+const IMPORT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const IMPORT_RATE_LIMIT_MAX = 30;
+const importRateLimits = new Map();
 const DEFAULT_SETTINGS = {
   automaticDiscoveryEnabled: true,
   timezone: TZ,
@@ -57,10 +68,69 @@ const URL_IMPORT_STAGES = {
   duplicates: 'Checking duplicates',
   ready: 'Ready for review',
 };
+const DEFAULT_DISCOVERY_SOURCE_SEED = [
+  {
+    id: 'starter-openalex-research-opportunities',
+    seedKey: 'starter-openalex-research-opportunities',
+    name: 'OpenAlex research opportunities',
+    type: 'OpenAlex',
+    url: 'https://api.openalex.org/works?search=research%20funding%20scholarship%20fellowship&per-page=10&sort=publication_date:desc',
+    expectedCategory: 'Research/Research Papers',
+    requestDelayMs: 1000,
+    concurrencyLimit: 1,
+    refreshFrequency: 'daily',
+  },
+  {
+    id: 'starter-crossref-research-funding',
+    seedKey: 'starter-crossref-research-funding',
+    name: 'Crossref research funding records',
+    type: 'Crossref',
+    url: 'https://api.crossref.org/works?query=research%20funding%20scholarship%20fellowship&rows=10&sort=published&order=desc',
+    expectedCategory: 'Research/Research Papers',
+    requestDelayMs: 1000,
+    concurrencyLimit: 1,
+    refreshFrequency: 'daily',
+  },
+  {
+    id: 'starter-arxiv-research-opportunities',
+    seedKey: 'starter-arxiv-research-opportunities',
+    name: 'arXiv research opportunities',
+    type: 'arXiv',
+    url: 'https://export.arxiv.org/api/query?search_query=all:research%20opportunities&start=0&max_results=10&sortBy=submittedDate&sortOrder=descending',
+    expectedCategory: 'Research/Research Papers',
+    requestDelayMs: 3000,
+    concurrencyLimit: 1,
+    refreshFrequency: 'daily',
+  },
+  {
+    id: 'starter-nsf-funding-rss',
+    seedKey: 'starter-nsf-funding-rss',
+    name: 'NSF funding opportunities RSS',
+    type: 'RSS',
+    url: 'https://www.nsf.gov/rss/rss_www_funding.xml',
+    expectedCategory: 'Research Opportunities/Research Grants',
+    requestDelayMs: 1500,
+    concurrencyLimit: 1,
+    refreshFrequency: 'daily',
+  },
+  {
+    id: 'starter-official-fellowship-webpage',
+    seedKey: 'starter-official-fellowship-webpage',
+    name: 'Microsoft Research PhD Fellowship webpage',
+    type: 'Public webpage',
+    url: 'https://www.microsoft.com/en-us/research/academic-program/phd-fellowship/',
+    expectedCategory: 'Research Opportunities/Fellowships',
+    requestDelayMs: 1500,
+    concurrencyLimit: 1,
+    refreshFrequency: 'daily',
+  },
+];
 
 function allowedOrigins() {
-  return (process.env.URL_IMPORT_ALLOWED_ORIGINS || process.env.DISCOVERY_ALLOWED_ORIGINS || '')
+  const configured = (process.env.URL_IMPORT_ALLOWED_ORIGINS || process.env.DISCOVERY_ALLOWED_ORIGINS || '')
     .split(',').map((item) => item.trim()).filter(Boolean);
+  if (configured.length) return configured;
+  return ['https://anubhaparashar.github.io', 'http://localhost:5173', 'http://127.0.0.1:5173'];
 }
 function applyCors(req, res) {
   const origin = req.get('origin') || '';
@@ -182,6 +252,176 @@ async function fetchSafe(url, redirects = 0, options = {}) {
     if (contentType && !allowed.test(contentType)) throw new Error('This URL did not return a supported response type.');
     return { html: await readLimitedBody(response), finalUrl: parsed.toString(), contentType, redirectChain: [parsed.toString()], redirectCount: redirects };
   } finally { clearTimeout(timer); }
+}
+function checkImportRateLimit(uid) {
+  if (!uid) throw httpError(401, 'Sign in before using source enrichment.');
+  const now = Date.now();
+  const current = (importRateLimits.get(uid) || []).filter((stamp) => now - stamp < IMPORT_RATE_LIMIT_WINDOW_MS);
+  if (current.length >= IMPORT_RATE_LIMIT_MAX) throw httpError(429, 'Too many URL imports. Please wait before trying again.');
+  current.push(now);
+  importRateLimits.set(uid, current);
+  for (const [key, stamps] of importRateLimits.entries()) {
+    const fresh = stamps.filter((stamp) => now - stamp < IMPORT_RATE_LIMIT_WINDOW_MS);
+    if (fresh.length) importRateLimits.set(key, fresh);
+    else importRateLimits.delete(key);
+  }
+}
+async function readLimitedBinary(response, maxBytes = MAX_PDF_BYTES) {
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.from(await response.arrayBuffer());
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) throw new Error('The file is too large to import safely.');
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+async function resolveRedirectSafe(url, redirects = 0, options = {}) {
+  const parsed = await assertSafeUrl(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs || FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(parsed.toString(), {
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'PersonalKnowledgeVaultDiscovery/1.0', Accept: options.accept || '*/*' },
+    });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      if (redirects >= MAX_REDIRECTS) throw new Error('Too many redirects.');
+      const location = response.headers.get('location');
+      if (!location) throw new Error('The link redirected without a Location header.');
+      const redirected = await resolveRedirectSafe(new URL(location, parsed).toString(), redirects + 1, options);
+      return { ...redirected, redirectChain: [parsed.toString(), ...(redirected.redirectChain || [])] };
+    }
+    response.body?.cancel?.();
+    return { finalUrl: parsed.toString(), status: response.status, contentType: response.headers.get('content-type') || '', redirectChain: [parsed.toString()] };
+  } finally { clearTimeout(timer); }
+}
+async function fetchBinarySafe(url, redirects = 0, options = {}) {
+  const parsed = await assertSafeUrl(url);
+  if (options.checkRobots !== false) await assertRobotsAllowed(parsed);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs || FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(parsed.toString(), {
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'PersonalKnowledgeVaultDiscovery/1.0', Accept: options.accept || 'application/pdf,*/*;q=0.4' },
+    });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      if (redirects >= MAX_REDIRECTS) throw new Error('Too many redirects.');
+      const location = response.headers.get('location');
+      if (!location) throw new Error('The file redirected without a Location header.');
+      const redirected = await fetchBinarySafe(new URL(location, parsed).toString(), redirects + 1, options);
+      return { ...redirected, redirectChain: [parsed.toString(), ...(redirected.redirectChain || [])] };
+    }
+    if (!response.ok) throw new Error(`The file returned HTTP ${response.status}.`);
+    const contentType = response.headers.get('content-type') || '';
+    const allowed = options.allowedContentTypes || /application\/pdf|application\/octet-stream/i;
+    if (contentType && !allowed.test(contentType) && !/\.pdf(?:[?#]|$)/i.test(parsed.pathname)) throw new Error('This link did not return a PDF.');
+    return { buffer: await readLimitedBinary(response, options.maxBytes || MAX_PDF_BYTES), finalUrl: parsed.toString(), contentType, redirectChain: [parsed.toString()] };
+  } finally { clearTimeout(timer); }
+}
+async function extractOfficialPdf(link = {}) {
+  const source = link.resolvedUrl || link.canonicalUrl || link.url || link.originalUrl;
+  if (!source) return null;
+  const file = await fetchBinarySafe(source, 0, { checkRobots: false, maxBytes: MAX_PDF_BYTES, timeoutMs: 18000 });
+  const parsed = await pdfParse(file.buffer);
+  const text = String(parsed.text || '').replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return {
+    ...link,
+    kind: 'official-pdf',
+    originalUrl: link.originalUrl || source,
+    resolvedUrl: file.finalUrl,
+    canonicalUrl: file.finalUrl,
+    contentType: file.contentType || 'application/pdf',
+    size: file.buffer.length,
+    pages: parsed.numpages || null,
+    text,
+    textPreview: text.slice(0, 1200),
+    extractionStatus: text ? 'extracted' : 'empty',
+  };
+}
+async function findUrlImportDuplicate(uid, urls = []) {
+  const values = [...new Set(urls.filter(Boolean))].slice(0, 6);
+  const fields = ['sourceUrl', 'sourceMetadata.canonicalUrl', 'sourceMetadata.canonicalPostUrl', 'sourceMetadata.officialPdfUrl'];
+  for (const value of values) {
+    for (const field of fields) {
+      const snapshot = await userRef(uid).collection('pages').where(field, '==', value).limit(1).get();
+      const doc = snapshot.docs[0];
+      if (doc) return { id: doc.id, title: doc.data()?.title || 'Existing entry', field, value };
+    }
+  }
+  return null;
+}
+async function importLinkedInUrl(sourceUrl, supplied = {}, uid = '') {
+  let fetched = null;
+  let fetchError = null;
+  try {
+    fetched = await fetchSafe(sourceUrl, 0, { checkRobots: false, accept: 'text/html,application/xhtml+xml,text/plain;q=0.8', timeoutMs: 15000 });
+  } catch (error) {
+    fetchError = error;
+  }
+  let provisional = buildLinkedInImportResult({
+    originalUrl: sourceUrl,
+    finalUrl: fetched?.finalUrl || normalizeLinkedInPostUrl(sourceUrl),
+    html: fetched?.html || '',
+    suppliedText: [supplied.title, supplied.text, supplied.sharedText].filter(Boolean).join('\n\n'),
+  });
+  const rawLinks = provisional.linkedinPost?.links || provisional.links || [];
+  const prioritizedLinks = [
+    ...rawLinks.filter((link) => /\\.pdf(?:[?#]|$)|acm\\.org|dl\\.acm\\.org/i.test(link.url || link.originalUrl || '')),
+    ...rawLinks.filter((link) => !/\\.pdf(?:[?#]|$)|acm\\.org|dl\\.acm\\.org/i.test(link.url || link.originalUrl || '')),
+  ];
+  const seenLinkTargets = new Set();
+  const resolvedLinks = [];
+  for (const link of prioritizedLinks.filter((link) => { const target = link.url || link.originalUrl || ''; if (!target || seenLinkTargets.has(target)) return false; seenLinkTargets.add(target); return true; }).slice(0, 30)) {
+    try {
+      const resolved = await resolveRedirectSafe(link.url || link.originalUrl, 0, { timeoutMs: 8000 });
+      resolvedLinks.push({
+        ...link,
+        resolvedUrl: resolved.finalUrl,
+        canonicalUrl: resolved.finalUrl,
+        contentType: resolved.contentType,
+        status: resolved.status,
+        redirectChain: resolved.redirectChain,
+        kind: /application\/pdf/i.test(resolved.contentType) || /\.pdf(?:[?#]|$)/i.test(resolved.finalUrl) ? 'pdf' : (link.kind || 'link'),
+      });
+    } catch (error) {
+      resolvedLinks.push({ ...link, resolutionError: error.message || 'Could not resolve link.' });
+    }
+  }
+  let officialPdf = null;
+  for (const candidate of detectOfficialPdfLinks(resolvedLinks)) {
+    try {
+      officialPdf = await extractOfficialPdf(candidate);
+      break;
+    } catch (error) {
+      officialPdf = { ...candidate, extractionStatus: 'failed', warning: error.message || 'Official PDF could not be extracted.' };
+    }
+  }
+  const result = buildLinkedInImportResult({
+    originalUrl: sourceUrl,
+    finalUrl: fetched?.finalUrl || provisional.finalUrl,
+    html: fetched?.html || '',
+    resolvedLinks,
+    officialPdf,
+    suppliedText: [supplied.title, supplied.text, supplied.sharedText].filter(Boolean).join('\n\n'),
+  });
+  const duplicate = uid ? await findUrlImportDuplicate(uid, [result.canonicalUrl, result.originalUrl, result.officialPdf?.canonicalUrl, result.officialPdf?.resolvedUrl]) : null;
+  return {
+    ...result,
+    contentType: fetched?.contentType || '',
+    redirectChain: fetched?.redirectChain || [sourceUrl],
+    duplicateOf: duplicate,
+    duplicateWarning: duplicate ? `This call may already exist in your vault: ${duplicate.title}` : '',
+    error: fetchError?.message || '',
+    warnings: [...(result.warnings || []), ...(fetchError ? [fetchError.message] : [])],
+  };
 }
 function meta(document, selectors) {
   for (const selector of selectors) {
@@ -512,7 +752,7 @@ async function discoverFromSitemap(source, limit) {
   return records.filter(Boolean);
 }
 async function discoverFromJsonApi(source, limit) {
-  const { html, finalUrl } = await fetchSafe(source.url, 0, { accept: 'application/json,text/plain;q=0.8', allowedContentTypes: /application\/json|text\/plain/i });
+  const { html, finalUrl } = await fetchSafe(source.url, 0, { checkRobots: false, accept: 'application/json,text/plain;q=0.8', allowedContentTypes: /application\/json|text\/plain/i });
   const payload = JSON.parse(html);
   const list = Array.isArray(payload) ? payload : payload.results || payload.items || payload.data || payload.message?.items || [];
   return list.slice(0, limit).map((item) => {
@@ -541,10 +781,57 @@ async function discoverFromSource(source, { limit = 10 } = {}) {
   if (/manual-only/.test(type)) return [];
   if (/rss|atom|feed/.test(type)) return discoverFromFeed(source, limit);
   if (/sitemap/.test(type)) return discoverFromSitemap(source, Math.min(limit, 8));
-  if (/\bapi\b|openalex|crossref|arxiv|semantic scholar|custom api/.test(type)) return discoverFromJsonApi(source, limit);
+  if (/arxiv/.test(type)) return discoverFromArxivApiSource(source, limit);
+  if (/\bapi\b|openalex|crossref|semantic scholar|custom api/.test(type)) return discoverFromJsonApi(source, limit);
   return [await discoverFromUrl(source.url, source)].filter(Boolean);
 }
 function userRef(uid) { return db.collection('users').doc(uid); }
+function normalizedSeedValue(value = '') { return String(value || '').trim().toLowerCase(); }
+function sourceMatchesSeed(source = {}, seed = {}) {
+  return normalizedSeedValue(source.seedKey) === normalizedSeedValue(seed.seedKey)
+    || normalizedSeedValue(source.url) === normalizedSeedValue(seed.url)
+    || normalizedSeedValue(source.name) === normalizedSeedValue(seed.name);
+}
+export async function seedDefaultDiscoverySources(uid) {
+  if (!uid) throw new Error('A user UID is required to seed discovery sources.');
+  const collection = userRef(uid).collection('discoverySources');
+  const snapshot = await collection.get();
+  const existing = snapshot.docs.map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() }));
+  const sourceIds = [];
+  for (const seed of DEFAULT_DISCOVERY_SOURCE_SEED) {
+    const match = existing.find((source) => sourceMatchesSeed(source, seed));
+    const ref = match?.ref || collection.doc(seed.id);
+    const payload = {
+      name: seed.name,
+      url: seed.url,
+      type: seed.type,
+      expectedCategory: seed.expectedCategory,
+      requestDelayMs: seed.requestDelayMs,
+      concurrencyLimit: seed.concurrencyLimit,
+      refreshFrequency: seed.refreshFrequency,
+      seedKey: seed.seedKey,
+      seedVersion: 1,
+      seededBy: 'default-discovery-sources',
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (!match) {
+      Object.assign(payload, {
+        enabled: true,
+        paused: false,
+        health: 'not-tested',
+        errorCount: 0,
+        createdAt: FieldValue.serverTimestamp(),
+        seededAt: FieldValue.serverTimestamp(),
+      });
+    } else {
+      if (typeof match.enabled === 'undefined') payload.enabled = true;
+      if (typeof match.paused === 'undefined') payload.paused = false;
+    }
+    await ref.set(payload, { merge: true });
+    sourceIds.push(ref.id);
+  }
+  return { sourceCount: sourceIds.length, sourceIds };
+}
 async function getSettings(uid) {
   const snapshot = await userRef(uid).collection('discovery').doc('settings').get();
   return { ...DEFAULT_SETTINGS, ...(snapshot.exists ? snapshot.data() : {}) };
@@ -809,6 +1096,13 @@ async function configuredUserIds() {
   logger.warn('No DISCOVERY_USER_UIDS configured; scheduled discovery skipped.');
   return [];
 }
+export async function seedDiscoverySourcesForConfiguredUsers() {
+  const results = [];
+  for (const uid of await configuredUserIds()) {
+    results.push({ uid, ...(await seedDefaultDiscoverySources(uid)) });
+  }
+  return results;
+}
 function localParts(settings, date = new Date()) {
   const timezone = settings.timezone || TZ;
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false }).formatToParts(date);
@@ -822,6 +1116,7 @@ function isWeekend(settings) {
 async function runScheduled(mode, trigger) {
   for (const uid of await configuredUserIds()) {
     try {
+      await seedDefaultDiscoverySources(uid);
       const settings = await getSettings(uid);
       if (settings.pauseAllScanning || !settings.automaticDiscoveryEnabled) continue;
       if (!settings.weekendScansEnabled && isWeekend(settings)) continue;
@@ -831,6 +1126,7 @@ async function runScheduled(mode, trigger) {
 }
 async function runConfigTick() {
   for (const uid of await configuredUserIds()) {
+    await seedDefaultDiscoverySources(uid);
     const settings = await getSettings(uid);
     if (settings.pauseAllScanning || !settings.automaticDiscoveryEnabled) continue;
     if (!settings.weekendScansEnabled && isWeekend(settings)) continue;
@@ -957,12 +1253,19 @@ export const importUrl = onRequest({ timeoutSeconds: 30, memory: '512MiB', maxIn
   if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'Use POST to import a URL.' });
   let sourceUrl = '';
   try {
-    await requireUser(req);
+    const decoded = await requireUser(req);
+    checkImportRateLimit(decoded.uid);
     sourceUrl = String(req.body?.url || '').trim();
     if (!sourceUrl) throw new Error('Missing URL.');
+    const supplied = { title: req.body?.title || '', text: req.body?.text || '', sharedText: req.body?.sharedText || '' };
+    if (isLinkedInPostUrl(sourceUrl) || isLinkedInUrl(sourceUrl)) {
+      const linkedInPreview = await importLinkedInUrl(sourceUrl, supplied, decoded.uid);
+      return json(res, 200, linkedInPreview);
+    }
     const { html, finalUrl, contentType, redirectChain = [] } = await fetchSafe(sourceUrl);
     const extracted = extractPage(html, finalUrl);
     const canonicalUrl = extracted.canonicalUrl || extracted.metadata?.canonicalUrl || finalUrl;
+    const duplicate = await findUrlImportDuplicate(decoded.uid, [canonicalUrl, sourceUrl, finalUrl]);
     return json(res, 200, {
       ok: true,
       originalUrl: sourceUrl,
@@ -972,6 +1275,8 @@ export const importUrl = onRequest({ timeoutSeconds: 30, memory: '512MiB', maxIn
       contentType,
       redirectChain,
       checkedAt: new Date().toISOString(),
+      duplicateOf: duplicate,
+      duplicateWarning: duplicate ? `This call may already exist in your vault: ${duplicate.title}` : '',
       ...extracted,
       canonicalUrl,
       metadata: {

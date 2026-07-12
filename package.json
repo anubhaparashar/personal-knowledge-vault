@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests/discovery-static.test.mjs"
+    "test": "node tests/discovery-static.test.mjs",
+    "test:live-linkedin": "node tests/live-linkedin-import.mjs"
   },
   "dependencies": {
     "@tiptap/extension-image": "^3.27.1",

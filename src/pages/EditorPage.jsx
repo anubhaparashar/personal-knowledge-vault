@@ -57,14 +57,20 @@ const EMPTY_FORM = {
 
 const EMPTY_SOURCE_METADATA = {
   sourceName: '',
+  sourcePlatform: '',
+  sourceAuthor: '',
   author: '',
   publicationDate: '',
   description: '',
   canonicalUrl: '',
+  canonicalPostUrl: '',
+  officialPdfUrl: '',
   originalUrl: '',
   resolvedUrl: '',
   publisher: '',
   journalTitle: '',
+  journalAbbreviation: '',
+  specialIssueTitle: '',
   institution: '',
   conference: '',
   funder: '',
@@ -327,22 +333,30 @@ function mergeImportantDates(existing = [], detected = [], pageId = 'draft') {
 
 function sourceMetadataFromImport(imported = {}, sourceUrl = '') {
   const metadata = imported.metadata || {};
+  const structured = imported.structured || imported.specialIssue || {};
   const resolvedUrl = metadata.resolvedUrl || imported.resolvedUrl || imported.finalUrl || imported.url || sourceUrl;
   const canonicalUrl = metadata.canonicalUrl || imported.canonicalUrl || resolvedUrl || sourceUrl;
+  const officialPdf = imported.officialPdf || imported.attachments?.find?.((item) => item.kind === 'official-pdf' || item.contentType === 'application/pdf') || null;
   return {
-    sourceName: metadata.sourceName || metadata.siteName || metadata.publisher || (canonicalUrl ? getSourceDomain(canonicalUrl) : ''),
-    author: metadata.author || '',
+    sourceName: metadata.sourceName || metadata.siteName || metadata.publisher || imported.sourcePlatform || (canonicalUrl ? getSourceDomain(canonicalUrl) : ''),
+    sourcePlatform: metadata.sourcePlatform || imported.sourcePlatform || '',
+    sourceAuthor: metadata.sourceAuthor || imported.sourceAuthor || '',
+    author: metadata.author || imported.sourceAuthor || '',
     publicationDate: metadata.publicationDate || metadata.publishedTime || metadata.datePublished || '',
-    description: metadata.description || imported.description || '',
+    description: metadata.description || imported.description || imported.summary || '',
     canonicalUrl,
     originalUrl: metadata.originalUrl || imported.originalUrl || sourceUrl,
     resolvedUrl,
-    publisher: metadata.publisher || '',
-    journalTitle: metadata.journal || metadata.journalTitle || imported.journalTitle || '',
+    canonicalPostUrl: metadata.canonicalPostUrl || imported.linkedinPost?.canonicalUrl || '',
+    publisher: metadata.publisher || structured.publisher || imported.publisher || '',
+    journalTitle: metadata.journal || metadata.journalTitle || structured.journal || imported.journalTitle || '',
+    journalAbbreviation: structured.journalAbbreviation || metadata.journalAbbreviation || '',
+    specialIssueTitle: structured.specialIssueTitle || metadata.specialIssueTitle || '',
     institution: metadata.institution || imported.institution || '',
     conference: metadata.conference || imported.conference || '',
     funder: metadata.funder || imported.funder || '',
     applicationUrl: metadata.applicationUrl || imported.applicationUrl || '',
+    officialPdfUrl: metadata.officialPdfUrl || officialPdf?.canonicalUrl || officialPdf?.resolvedUrl || officialPdf?.url || '',
     lastChecked: imported.checkedAt || new Date().toISOString(),
     enrichmentStatus: imported.partial || imported.extractionBlocked ? 'partial' : 'enriched',
     enrichmentMessage: imported.metadata?.platformMessage || imported.summary || '',
@@ -395,6 +409,7 @@ function statusTextFromState(saveStatus, hasLocalChanges) {
 export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const { user } = useAuth();
   const fileInput = useRef(null);
+  const editorFormRef = useRef(null);
   const importControllerRef = useRef(null);
   const autoEnrichedSourceRef = useRef('');
   const uploadControllersRef = useRef(new Map());
@@ -406,6 +421,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [sourceMetadata, setSourceMetadata] = useState(EMPTY_SOURCE_METADATA);
   const [sourceEnrichment, setSourceEnrichment] = useState(EMPTY_SOURCE_ENRICHMENT);
+  const [sourceImportPreview, setSourceImportPreview] = useState(null);
   const [detectedSourceUrls, setDetectedSourceUrls] = useState([]);
   const [opportunityDetails, setOpportunityDetails] = useState(EMPTY_OPPORTUNITY_DETAILS);
   const [recordOrigin, setRecordOrigin] = useState('manually-added');
@@ -683,7 +699,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         setImportMessage('Source link detected. Reading source...');
         enrichFromSourceUrl(detectedUrl, { detected: true });
       } else {
-        setImportMessage('Link detected - Import source');
+        setImportMessage('Link detected - Analyse source');
       }
     }, 450);
     return () => window.clearTimeout(timeoutId);
@@ -702,9 +718,15 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     ['Original shared URL', sourceMetadata.originalUrl || form.sourceUrl],
     ['Resolved URL', sourceMetadata.resolvedUrl],
     ['Canonical URL', sourceMetadata.canonicalUrl],
+    ['Canonical LinkedIn post', sourceMetadata.canonicalPostUrl],
+    ['Official PDF URL', sourceMetadata.officialPdfUrl],
     ['Website/source name', sourceMetadata.sourceName],
+    ['Source platform', sourceMetadata.sourcePlatform],
+    ['Source author', sourceMetadata.sourceAuthor],
     ['Publisher', sourceMetadata.publisher],
     ['Journal', sourceMetadata.journalTitle],
+    ['Journal abbreviation', sourceMetadata.journalAbbreviation],
+    ['Special issue', sourceMetadata.specialIssueTitle],
     ['Institution', sourceMetadata.institution],
     ['Author', sourceMetadata.author],
     ['Publication date', sourceMetadata.publicationDate],
@@ -1248,14 +1270,20 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     return {
       ...current,
       sourceName: current.sourceName || next.sourceName || '',
-      author: current.author || next.author || '',
+      sourcePlatform: current.sourcePlatform || next.sourcePlatform || '',
+      sourceAuthor: current.sourceAuthor || next.sourceAuthor || '',
+      author: current.author || next.author || next.sourceAuthor || '',
       publicationDate: current.publicationDate || next.publicationDate || '',
       description: current.description || next.description || '',
       canonicalUrl: next.canonicalUrl || current.canonicalUrl || '',
+      canonicalPostUrl: next.canonicalPostUrl || current.canonicalPostUrl || '',
+      officialPdfUrl: next.officialPdfUrl || current.officialPdfUrl || '',
       originalUrl: next.originalUrl || current.originalUrl || '',
       resolvedUrl: next.resolvedUrl || current.resolvedUrl || '',
       publisher: current.publisher || next.publisher || '',
       journalTitle: current.journalTitle || next.journalTitle || '',
+      journalAbbreviation: current.journalAbbreviation || next.journalAbbreviation || '',
+      specialIssueTitle: current.specialIssueTitle || next.specialIssueTitle || '',
       institution: current.institution || next.institution || '',
       conference: current.conference || next.conference || '',
       funder: current.funder || next.funder || '',
@@ -1266,6 +1294,89 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     };
   }
 
+  function buildSourceImportPreview(imported = {}, metadata = {}, dates = [], nextSourceMetadata = {}, conflicts = []) {
+    const structured = imported.structured || imported.specialIssue || {};
+    const officialPdf = imported.officialPdf || imported.attachments?.find?.((item) => item.kind === 'official-pdf' || item.kind === 'pdf' || item.contentType === 'application/pdf') || null;
+    const previewTags = mergeTags(imported.tags || [], metadata.tags || []);
+    return {
+      imported,
+      sourceMetadata: nextSourceMetadata,
+      suggestedTitle: imported.suggestedTitle || metadata.suggestedTitle || imported.title || '',
+      sourcePlatform: imported.sourcePlatform || nextSourceMetadata.sourcePlatform || 'web',
+      author: imported.sourceAuthor || nextSourceMetadata.sourceAuthor || nextSourceMetadata.author || '',
+      journal: structured.journal || nextSourceMetadata.journalTitle || '',
+      publisher: structured.publisher || nextSourceMetadata.publisher || '',
+      specialIssueTitle: structured.specialIssueTitle || nextSourceMetadata.specialIssueTitle || '',
+      recordType: imported.recordType || structured.recordType || '',
+      reportedJournalInfo: structured.reportedJournalInfo || null,
+      summary: imported.summary || metadata.summary || nextSourceMetadata.description || '',
+      topics: structured.topics || [],
+      guestEditors: structured.guestEditors || [],
+      category: imported.suggestedCategory || imported.category || metadata.category || '',
+      tags: previewTags,
+      dates,
+      officialPdf,
+      sourceUrls: [
+        ['Original URL', nextSourceMetadata.originalUrl || imported.originalUrl],
+        ['Resolved URL', nextSourceMetadata.resolvedUrl || imported.resolvedUrl],
+        ['Canonical URL', nextSourceMetadata.canonicalUrl || imported.canonicalUrl],
+        ['Official PDF', nextSourceMetadata.officialPdfUrl || officialPdf?.canonicalUrl || officialPdf?.resolvedUrl || officialPdf?.url],
+      ].filter(([, value]) => String(value || '').trim()),
+      confidence: imported.extractionConfidence ?? metadata.categoryConfidence ?? 0,
+      warnings: imported.warnings || (imported.metadata?.platformMessage ? [imported.metadata.platformMessage] : []),
+      conflicts,
+      duplicateWarning: imported.duplicateWarning || '',
+    };
+  }
+
+  function applySourceImportPreview({ save = false, addReminders = false } = {}) {
+    if (!sourceImportPreview) return;
+    const preview = sourceImportPreview;
+    markDirty();
+    setSourceMetadata((current) => mergedSourceMetadata(current, preview.sourceMetadata || {}));
+    if (preview.category) {
+      setCategoryManuallyEdited(false);
+      setAutoCategory((current) => ({ ...current, category: preview.category, confidence: Math.max(current.confidence || 0, preview.confidence || 0) }));
+    }
+    setImportantDates((current) => mergeImportantDates(current, (preview.dates || []).map((date) => addReminders ? { ...date, reminder: { ...(date.reminder || {}), inApp: true } } : date), pageId));
+    setForm((current) => {
+      const manualTags = splitTagsText(current.tagsText);
+      return {
+        ...current,
+        sourceUrl: current.sourceUrl || preview.sourceMetadata?.originalUrl || preview.sourceUrls?.[0]?.[1] || '',
+        title: current.title.trim() ? current.title : (preview.suggestedTitle || current.title),
+        category: preview.category || current.category,
+        tagsText: mergeTags(manualTags, preview.tags || []).join(', '),
+        summary: current.summary.trim() ? current.summary : cleanVisibleText(preview.summary || ''),
+      };
+    });
+    setImportMessage(save ? 'Import preview applied. Saving...' : 'Import preview applied. Review and save when ready.');
+    if (save) window.setTimeout(() => editorFormRef.current?.requestSubmit(), 0);
+  }
+
+  function attachOfficialPdfFromPreview() {
+    const pdf = sourceImportPreview?.officialPdf;
+    const url = pdf?.canonicalUrl || pdf?.resolvedUrl || pdf?.url || pdf?.originalUrl;
+    if (!url) {
+      setImportMessage('No official PDF link is available to attach.');
+      return;
+    }
+    upsertAttachment({
+      provider: 'official-pdf-link',
+      originalUrl: pdf.originalUrl || url,
+      url,
+      name: pdf.title || 'Official call-for-papers PDF',
+      title: pdf.title || 'Official call-for-papers PDF',
+      description: 'Official PDF linked by source enrichment. The PDF was not uploaded automatically.',
+      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      size: Number(pdf.size || 0),
+      pages: pdf.pages || null,
+      addedAt: new Date().toISOString(),
+      status: 'Linked from official source',
+    });
+    setImportMessage('Official PDF link attached.');
+  }
   function sourceFailureMessage(error, sourceUrl) {
     const raw = error?.message || 'Could not import this link.';
     if (/URL import endpoint is not configured/i.test(raw)) return 'Source enrichment backend is not configured.';
@@ -1308,10 +1419,11 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       const cleanHtml = sanitizeHtml(imported.html || htmlFromText(imported.text || ''));
       const importedText = imported.text || htmlToText(cleanHtml);
       const nextSourceMetadata = sourceMetadataFromImport(imported, sourceUrl);
-      const combinedText = [form.title, currentText, imported.title, importedText, imported.summary, nextSourceMetadata.description].filter(Boolean).join('\n\n');
+      const structuredText = [imported.structured?.specialIssueTitle, imported.structured?.journal, ...(imported.structured?.topics || []), ...(imported.structured?.guestEditors || []).map((editor) => [editor.name, editor.institution, editor.country].filter(Boolean).join(' '))].filter(Boolean).join('\n');
+      const combinedText = [form.title, currentText, imported.suggestedTitle, imported.title, importedText, imported.extractedContent, imported.summary, nextSourceMetadata.description, structuredText].filter(Boolean).join('\n\n');
       const metadata = generateSmartMetadata({
         pageId,
-        title: imported.title || form.title,
+        title: imported.suggestedTitle || imported.title || form.title,
         html: form.html,
         text: combinedText,
         sourceUrl: nextSourceMetadata.canonicalUrl || nextSourceMetadata.resolvedUrl || sourceUrl,
@@ -1321,10 +1433,16 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         category: form.category,
         tags: splitTagsText(form.tagsText),
       });
-      const officialDates = detectImportantDates({
+      const backendDates = Array.isArray(imported.importantDates) ? imported.importantDates : [];
+      const officialDates = backendDates.length ? backendDates.map((date) => ({
+        ...date,
+        source: date.source || (date.sourceType === 'official-pdf' ? 'official-source' : 'automatic'),
+        sourceText: date.sourceText || date.snippet || '',
+        detectedAutomatically: true,
+      })) : detectImportantDates({
         pageId,
-        title: imported.title || form.title,
-        text: importedText,
+        title: imported.suggestedTitle || imported.title || form.title,
+        text: [importedText, imported.extractedContent].filter(Boolean).join('\n\n'),
         summary: imported.summary || imported.description || nextSourceMetadata.description,
         sourceUrl: nextSourceMetadata.canonicalUrl || nextSourceMetadata.resolvedUrl || sourceUrl,
         sourceMetadata: nextSourceMetadata,
@@ -1335,17 +1453,21 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         detectedAutomatically: true,
       }));
       const detectedDates = officialDates.length ? officialDates : (metadata.importantDates || []).map((date) => ({ ...date, source: 'automatic' }));
+      const importedCategory = imported.suggestedCategory || imported.category || metadata.category;
+      const importedTags = mergeTags(metadata.tags || [], imported.tags || []);
       const conflicts = findDateConflicts(importantDates, officialDates);
       const nextStatus = imported.partial || imported.extractionBlocked ? 'partial' : 'enriched';
       const nextMessage = imported.partial || imported.extractionBlocked
         ? (imported.metadata?.platformMessage || 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.')
         : 'Source enriched. Official page retrieved.';
+      const preview = buildSourceImportPreview(imported, metadata, detectedDates, nextSourceMetadata, conflicts);
 
       setSourceMetadata((current) => mergedSourceMetadata(current, nextSourceMetadata));
       setRecordOrigin((current) => current === 'manually-added' && options.detected ? 'manually-added' : current || 'manually-added');
-      setAutoCategory({ category: metadata.category, confidence: metadata.categoryConfidence });
+      setAutoCategory({ category: importedCategory, confidence: imported.extractionConfidence || metadata.categoryConfidence });
       setLastDetectedDates(detectedDates);
       setImportantDates((current) => mergeImportantDates(current, detectedDates, pageId));
+      setSourceImportPreview(preview);
       setSourceEnrichment({
         ...EMPTY_SOURCE_ENRICHMENT,
         status: nextStatus,
@@ -1355,7 +1477,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         canonicalUrl: nextSourceMetadata.canonicalUrl || '',
         sourceName: nextSourceMetadata.sourceName || nextSourceMetadata.publisher || '',
         lastChecked: nextSourceMetadata.lastChecked || '',
-        suggestedTitle: metadata.suggestedTitle || imported.title || '',
+        suggestedTitle: imported.suggestedTitle || metadata.suggestedTitle || imported.title || '',
         conflicts,
       });
       setForm((current) => {
@@ -1364,9 +1486,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         return {
           ...current,
           sourceUrl,
-          title: current.title.trim() ? current.title : (metadata.suggestedTitle || imported.title || current.title),
-          category: shouldSetCategory ? metadata.category : current.category,
-          tagsText: mergeTags(manualTags, metadata.tags).join(', '),
+          title: current.title.trim() ? current.title : (imported.suggestedTitle || metadata.suggestedTitle || imported.title || current.title),
+          category: shouldSetCategory ? importedCategory : current.category,
+          tagsText: mergeTags(manualTags, importedTags).join(', '),
           summary: current.summary.trim() ? current.summary : cleanVisibleText(imported.summary || metadata.summary || nextSourceMetadata.description || ''),
         };
       });
@@ -1833,13 +1955,13 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
                 <span>{item.status || 'Uploaded'}</span>
               </div>
               <div className="file-actions">
-                {(item.storagePath || item.driveFileId || item.provider === "google-drive-link") ? <a className="text-link" href={item.webViewLink || item.url || item.originalUrl || "#"} target="_blank" rel="noreferrer">Open in Drive</a> : null}
+                {(item.storagePath || item.driveFileId || (item.provider === "google-drive-link" || item.provider === "official-pdf-link")) ? <a className="text-link" href={item.webViewLink || item.url || item.originalUrl || "#"} target="_blank" rel="noreferrer">Open source</a> : null}
                 {(item.storagePath || item.driveFileId) && kind.readable ? <button type="button" className="text-link" onClick={() => openPdfInWebsite(item)}>Read PDF in website</button> : null}
                 {(item.storagePath || item.driveFileId) ? <button type="button" className="text-link" onClick={() => extractAttachment(item)}>Extract content into note</button> : null}
                 {(item.storagePath || item.driveFileId) ? <button type="button" className="text-link" onClick={() => downloadAttachment(item)}>Download</button> : null}
                 {item.status === "Uploading" ? <button type="button" className="text-link" onClick={() => cancelUploadRow(item.localId)}>Cancel</button> : null}
                 {(item.error || item.cancelled) ? <button type="button" className="text-link" onClick={() => retryUploadRow(item)}>Retry</button> : null}
-                {(item.storagePath || item.driveFileId || item.provider === "google-drive-link") ? <button type="button" className="text-link" onClick={() => removeAttachment(item, inline)}>Remove from note</button> : null}
+                {(item.storagePath || item.driveFileId || (item.provider === "google-drive-link" || item.provider === "official-pdf-link")) ? <button type="button" className="text-link" onClick={() => removeAttachment(item, inline)}>Remove from note</button> : null}
                 {(item.storagePath || item.driveFileId) ? <button type="button" className="text-link danger-link" onClick={() => deleteAttachmentFromDrive(item, inline)}>Delete from Drive</button> : null}
               </div>
             </div>
@@ -1902,6 +2024,92 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     );
   }
 
+  function renderSourceImportPreview() {
+    const preview = sourceImportPreview;
+    if (!preview) return null;
+    const confidence = Math.round(Number(preview.confidence || 0) * 100);
+    return (
+      <div className="source-import-preview">
+        <div className="source-import-preview-head">
+          <div>
+            <p className="eyebrow">Import Preview</p>
+            <h4>{preview.suggestedTitle || 'Imported source'}</h4>
+            {preview.recordType ? <span>{preview.recordType}</span> : null}
+          </div>
+          <span className="status-chip">{confidence ? `${confidence}% confidence` : 'Review'}</span>
+        </div>
+        <dl className="source-status-grid">
+          {preview.sourcePlatform ? <div><dt>Source platform</dt><dd>{preview.sourcePlatform}</dd></div> : null}
+          {preview.author ? <div><dt>Author</dt><dd>{preview.author}</dd></div> : null}
+          {preview.journal ? <div><dt>Journal</dt><dd>{preview.journal}</dd></div> : null}
+          {preview.publisher ? <div><dt>Publisher</dt><dd>{preview.publisher}</dd></div> : null}
+          {preview.specialIssueTitle ? <div><dt>Special issue</dt><dd>{preview.specialIssueTitle}</dd></div> : null}
+          {preview.category ? <div><dt>Suggested category</dt><dd>{preview.category}</dd></div> : null}
+        </dl>
+        {preview.summary ? <p className="source-preview-summary">{preview.summary}</p> : null}
+        {preview.reportedJournalInfo ? (
+          <div className="source-preview-section">
+            <strong>Reported journal information</strong>
+            <span>Impact factor reported in post: {preview.reportedJournalInfo.impactFactor || 'Not reported'}</span>
+            <span>Quartile reported in post: {preview.reportedJournalInfo.quartile || 'Not reported'}</span>
+            <span>{preview.reportedJournalInfo.verificationStatus || 'Unverified external claim'}</span>
+          </div>
+        ) : null}
+        {preview.topics?.length ? (
+          <div className="source-preview-section">
+            <strong>Topics</strong>
+            <div className="source-preview-chip-row">{preview.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+          </div>
+        ) : null}
+        {preview.guestEditors?.length ? (
+          <div className="source-preview-section">
+            <strong>Guest editors</strong>
+            {preview.guestEditors.map((editor) => (
+              <span key={editor.name}>{[editor.name, editor.institution, editor.country].filter(Boolean).join(' - ')}</span>
+            ))}
+          </div>
+        ) : null}
+        {preview.tags?.length ? (
+          <div className="source-preview-section">
+            <strong>Suggested tags</strong>
+            <div className="source-preview-chip-row">{preview.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+          </div>
+        ) : null}
+        {preview.dates?.length ? (
+          <div className="source-preview-section">
+            <strong>Important dates</strong>
+            {preview.dates.map((date) => (
+              <span key={date.id || `${date.type}-${date.date || date.year + '-' + date.month}`}>{date.displayLabel || date.title || date.type} - {formatDetectedDate(date)}</span>
+            ))}
+          </div>
+        ) : null}
+        {preview.officialPdf ? (
+          <div className="source-preview-section">
+            <strong>Official PDF</strong>
+            <span>{preview.officialPdf.title || preview.officialPdf.canonicalUrl || preview.officialPdf.resolvedUrl || preview.officialPdf.url || 'PDF detected'}</span>
+            {preview.officialPdf.extractionStatus ? <span>Status: {preview.officialPdf.extractionStatus}</span> : null}
+          </div>
+        ) : null}
+        {preview.sourceUrls?.length ? (
+          <div className="source-preview-section">
+            <strong>Source URLs</strong>
+            {preview.sourceUrls.map(([label, value]) => <span key={`${label}-${value}`}>{label}: {value}</span>)}
+          </div>
+        ) : null}
+        {preview.duplicateWarning ? <p className="warning-note">{preview.duplicateWarning}</p> : null}
+        {preview.warnings?.length ? <p className="warning-note">{preview.warnings.join(' ')}</p> : null}
+        {preview.conflicts?.length ? <p className="warning-note">Date conflicts need review before saving.</p> : null}
+        <div className="source-preview-actions">
+          <button type="button" className="button primary" onClick={() => applySourceImportPreview({ save: true })}>Save to Special Issues</button>
+          <button type="button" className="button secondary" onClick={() => applySourceImportPreview()}>Edit Before Saving</button>
+          <button type="button" className="button secondary" disabled={!preview.officialPdf} onClick={attachOfficialPdfFromPreview}>Attach Official PDF</button>
+          <button type="button" className="button secondary" onClick={() => applySourceImportPreview({ save: true, addReminders: true })}>Save and Add Reminders</button>
+          <button type="button" className="text-link" onClick={recheckSource}>Reanalyse</button>
+          <button type="button" className="text-link danger-link" onClick={() => setSourceImportPreview(null)}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
   function renderSourceEnrichmentStatus() {
     const status = sourceEnrichment.status || 'not-started';
     const originalUrl = sourceEnrichment.originalUrl || sourceMetadata.originalUrl || form.sourceUrl;
@@ -1949,6 +2157,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             <a className="text-link" href={searchUrl} target="_blank" rel="noreferrer">Search for official source</a>
           </div>
         ) : null}
+        {renderSourceImportPreview()}
         {sourceEnrichment.conflicts?.length ? (
           <div className="source-conflict-list">
             <strong>Source date differs from pasted information</strong>
@@ -2208,7 +2417,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   return (
     <AppShell title={isNew ? 'New Entry' : 'Edit Page'}>
-      <form className="editor-layout" onSubmit={submit}>
+      <form ref={editorFormRef} className="editor-layout" onSubmit={submit}>
         <section className="editor-main">
           <label className="field-label title-field">
             Page title
