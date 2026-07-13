@@ -101,6 +101,8 @@ run('Record origins and queue-based discovery state are represented in frontend'
   assert.match(dashboard, /Full Web Scan/);
   assert.match(dashboard, /Scrape a Link/);
   assert.match(dashboard, /Scan One Source/);
+  assert.match(dashboard, /const \[discoveryRequests, setDiscoveryRequests\] = useState\(\[\]\)/);
+  assert.match(dashboard, /Array\.isArray\(discoveryRequests\)/);
 });
 
 
@@ -143,6 +145,7 @@ run('Manual URL import queues link requests and exposes request statuses', () =>
     'Instant scraping is disabled to keep the project free',
     'requestStatusLabel',
   ].forEach((label) => assert.match(modal, new RegExp(label.replace(/[+]/g, '\\+'))));
+  assert.match(modal, /Array\.isArray\(requests\)/);
 });
 
 run('Important date extraction keeps local labels and month precision', () => {

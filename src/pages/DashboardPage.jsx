@@ -237,6 +237,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const [discoverySources, setDiscoverySources] = useState([]);
   const [latestDiscoveryRun, setLatestDiscoveryRun] = useState(null);
   const [discoveryStats, setDiscoveryStats] = useState(null);
+  const [discoveryRequests, setDiscoveryRequests] = useState([]);
   const [discoveryMessage, setDiscoveryMessage] = useState('');
   const [selectedDiscoverySourceId, setSelectedDiscoverySourceId] = useState('');
   const [runLogOpen, setRunLogOpen] = useState(false);
@@ -254,6 +255,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
       subscribeDiscoverySources(user.uid, setDiscoverySources, (err) => setDiscoveryMessage(err.message)),
       subscribeLatestDiscoveryRun(user.uid, setLatestDiscoveryRun, (err) => setDiscoveryMessage(err.message)),
       subscribeDiscoveryStats(user.uid, setDiscoveryStats, (err) => setDiscoveryMessage(err.message)),
+      subscribeDiscoveryRequests(user.uid, (items = []) => setDiscoveryRequests(Array.isArray(items) ? items : []), (err) => setDiscoveryMessage(err.message), 20),
     ];
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe?.());
   }, [user?.uid]);
@@ -382,8 +384,9 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const noDeadlineRows = noDeadlineMode ? pagesWithoutDeadlines.slice(0, 10) : [];
   const enabledSources = discoverySources.filter((source) => source.enabled !== false && !source.paused);
   const enabledSourceCount = enabledSources.length;
-  const queuedDiscoveryRequests = discoveryRequests.filter((request) => ['queued', 'processing'].includes(request.status));
-  const queuedLinkRequests = discoveryRequests.filter((request) => request.type === 'single-link').slice(0, 4);
+  const discoveryRequestRows = Array.isArray(discoveryRequests) ? discoveryRequests : [];
+  const queuedDiscoveryRequests = discoveryRequestRows.filter((request) => ['queued', 'processing'].includes(request.status));
+  const queuedLinkRequests = discoveryRequestRows.filter((request) => request.type === 'single-link').slice(0, 4);
   const automaticDiscoveryLabel = 'GitHub Actions scheduled';
   const discoveryRunStatus = latestDiscoveryRun?.status || 'idle';
   const discoveryStatusLabel = latestDiscoveryRun?.currentStage || DISCOVERY_PROGRESS_LABELS[latestDiscoveryRun?.step] || DISCOVERY_PROGRESS_LABELS[discoveryRunStatus] || 'Idle';

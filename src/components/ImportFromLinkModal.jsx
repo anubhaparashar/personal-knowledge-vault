@@ -32,13 +32,13 @@ export default function ImportFromLinkModal({ open, onClose }) {
 
   useEffect(() => {
     if (!open || !user?.uid) return undefined;
-    return subscribeDiscoveryRequests(user.uid, setRequests, (error) => setMessage(error.message), 20);
+    return subscribeDiscoveryRequests(user.uid, (items = []) => setRequests(Array.isArray(items) ? items : []), (error) => setMessage(error.message), 20);
   }, [open, user?.uid]);
 
-  const linkRequests = useMemo(
-    () => requests.filter((request) => request.type === 'single-link').slice(0, 6),
-    [requests],
-  );
+  const linkRequests = useMemo(() => {
+    const requestRows = Array.isArray(requests) ? requests : [];
+    return requestRows.filter((request) => request.type === 'single-link').slice(0, 6);
+  }, [requests]);
 
   if (!open) return null;
 
