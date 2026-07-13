@@ -2490,3 +2490,16 @@ a { color: inherit; }
 }
 .date-reanalysis-panel article:first-of-type { border-top: 0; }
 .date-reanalysis-panel span { color: var(--muted); font-size: 13px; }
+
+.request-status-list { display: grid; gap: 10px; margin-top: 14px; }
+.request-status-list h3 { margin: 0; font-size: 1rem; }
+.request-status-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.request-status-list.compact { margin: 12px 0; }
+.request-status-list strong, .request-status-list span { display: block; overflow-wrap: anywhere; }
+.request-status-list article div > span { margin-top: 3px; color: var(--muted); font-size: 0.78rem; }
+.request-status { display: inline-flex; align-items: center; justify-content: center; min-width: 86px; min-height: 28px; padding: 0.25rem 0.55rem; border-radius: 999px; border: 1px solid var(--line); font-size: 0.76rem; font-weight: 900; white-space: nowrap; }
+.request-status.queued { color: var(--navy-700); background: rgba(36, 87, 134, 0.10); }
+.request-status.processing { color: var(--warning); background: rgba(181, 106, 24, 0.11); }
+.request-status.completed { color: var(--success); background: rgba(35, 122, 87, 0.11); }
+.request-status.failed { color: var(--danger); background: rgba(178, 58, 72, 0.10); }
+@media (max-width: 680px) { .request-status-list article { grid-template-columns: 1fr; } .request-status { justify-self: start; } }

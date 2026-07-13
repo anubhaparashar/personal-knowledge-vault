@@ -1,23 +1,21 @@
-{
-  "name": "personal-knowledge-vault-functions",
-  "private": true,
-  "type": "module",
-  "engines": {
-    "node": "20"
-  },
-  "main": "index.js",
-  "scripts": {
-    "deploy": "firebase deploy --only functions",
-    "run-discovery": "node run-discovery.mjs",
-    "seed-discovery-sources": "node seed-discovery-sources.mjs",
-    "test": "node --check index.js"
-  },
-  "dependencies": {
-    "@mozilla/readability": "^0.6.0",
-    "firebase-admin": "^13.0.2",
-    "firebase-functions": "^6.3.2",
-    "jsdom": "^25.0.1",
-    "sanitize-html": "^2.14.0",
-    "pdf-parse": "^1.1.1"
-  }
+﻿{
+    "name":  "personal-knowledge-vault-functions",
+    "private":  true,
+    "type":  "module",
+    "engines":  {
+                    "node":  "20"
+                },
+    "main":  "index.js",
+    "scripts":  {
+                    "run-discovery":  "node run-discovery.mjs",
+                    "seed-discovery-sources":  "node seed-discovery-sources.mjs",
+                    "test":  "node --check index.js"
+                },
+    "dependencies":  {
+                         "@mozilla/readability":  "^0.6.0",
+                         "firebase-admin":  "^13.0.2",
+                         "jsdom":  "^25.0.1",
+                         "sanitize-html":  "^2.14.0",
+                         "pdf-parse":  "^1.1.1"
+                     }
 }

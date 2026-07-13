@@ -1,12 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   DEFAULT_DISCOVERY_SETTINGS,
+  DISCOVERY_QUEUE_MESSAGE,
+  FIXED_DISCOVERY_SCHEDULE_LABEL,
+  RESEARCH_DISCOVERY_WORKFLOW_URL,
   SOURCE_TYPES,
   deleteDiscoverySource,
   formatDiscoveryTimestamp,
-  isDiscoveryBackendConfigured,
-  nextScheduledScan,
   pauseDiscoverySource,
   saveDiscoverySettings,
   saveDiscoverySource,
@@ -15,7 +16,6 @@ import {
   subscribeDiscoverySources,
   subscribeDiscoveryStats,
   subscribeLatestDiscoveryRun,
-  testDiscoverySource,
 } from '../services/discovery';
 
 const EMPTY_SOURCE = {
@@ -50,7 +50,6 @@ export default function DiscoverySettingsPanel() {
   const [stats, setStats] = useState(null);
   const [latestRun, setLatestRun] = useState(null);
   const [sourceDraft, setSourceDraft] = useState(EMPTY_SOURCE);
-  const [preview, setPreview] = useState(null);
   const [message, setMessage] = useState('');
   const [working, setWorking] = useState(false);
 
@@ -66,9 +65,8 @@ export default function DiscoverySettingsPanel() {
   }, [user?.uid]);
 
   const [timeOne, timeTwo] = splitTimes(settings.fullScanTimes);
-  const configured = isDiscoveryBackendConfigured();
   const editingExisting = Boolean(sourceDraft.id);
-  const canSaveSource = editingExisting || Boolean(preview?.ok);
+  const canSaveSource = Boolean(sourceDraft.name && sourceDraft.url);
 
   function updateSetting(name, value) {
     setSettings((current) => ({ ...current, [name]: value }));
@@ -81,7 +79,6 @@ export default function DiscoverySettingsPanel() {
   }
 
   function updateSource(name, value) {
-    setPreview(null);
     setSourceDraft((current) => ({ ...current, [name]: value }));
   }
 
@@ -90,7 +87,7 @@ export default function DiscoverySettingsPanel() {
     setMessage('');
     try {
       await saveDiscoverySettings(user.uid, settings);
-      setMessage('Discovery schedule preferences saved. Backend scheduler ownership remains in Firebase Functions.');
+      setMessage('Discovery schedule preferences saved. GitHub Actions runs at 06:00 IST and 18:00 IST.');
     } catch (error) {
       setMessage(error.message || 'Could not save discovery settings.');
     } finally {
@@ -98,19 +95,8 @@ export default function DiscoverySettingsPanel() {
     }
   }
 
-  async function testSource(source = sourceDraft) {
-    setWorking(true);
-    setMessage('');
-    setPreview(null);
-    try {
-      const result = await testDiscoverySource(user, normalizeDraft(source));
-      setPreview(result);
-      setMessage(result.preview?.length ? `Source test found ${result.preview.length} preview record(s).` : 'Source test completed with no records.');
-    } catch (error) {
-      setMessage(error.message || 'Could not test this source.');
-    } finally {
-      setWorking(false);
-    }
+  function testSource() {
+    setMessage('Instant source testing is disabled to keep the project free. Save the source, then run the Research Discovery workflow.');
   }
 
   async function saveSource() {
@@ -119,8 +105,7 @@ export default function DiscoverySettingsPanel() {
     try {
       await saveDiscoverySource(user.uid, normalizeDraft(sourceDraft));
       setSourceDraft(EMPTY_SOURCE);
-      setPreview(null);
-      setMessage('Source saved. It will be used only by configured backend scans.');
+      setMessage('Source saved. It will be used by GitHub Actions scheduled scans.');
     } catch (error) {
       setMessage(error.message || 'Could not save source.');
     } finally {
@@ -133,9 +118,9 @@ export default function DiscoverySettingsPanel() {
     setMessage('');
     try {
       await scanDiscoverySource(user, source.id);
-      setMessage('Single-source scan started. Watch the latest run status on the dashboard.');
+      setMessage(DISCOVERY_QUEUE_MESSAGE);
     } catch (error) {
-      setMessage(error.message || 'Could not scan this source.');
+      setMessage(error.message || 'Could not queue this source scan.');
     } finally {
       setWorking(false);
     }
@@ -150,7 +135,7 @@ export default function DiscoverySettingsPanel() {
     <section className="discovery-settings-stack">
       <article className="settings-card full-width discovery-schedule-card">
         <h2>Discovery Schedule</h2>
-        {!configured ? <p className="form-error">Automatic discovery is not configured. Deploy the Firebase Functions and set the discovery endpoints before claiming scans are active.</p> : null}
+        <p className="status-message">Automatic Discovery: GitHub Actions scheduled. Manual scanning: Queue-based, no Firebase Functions.</p>
         <div className="settings-form-grid">
           <label className="switch-field"><input type="checkbox" checked={settings.automaticDiscoveryEnabled} onChange={(event) => updateSetting('automaticDiscoveryEnabled', event.target.checked)} /><span>Enable automatic discovery</span></label>
           <label className="switch-field"><input type="checkbox" checked={settings.pauseAllScanning} onChange={(event) => updateSetting('pauseAllScanning', event.target.checked)} /><span>Pause all scanning</span></label>
@@ -162,16 +147,19 @@ export default function DiscoverySettingsPanel() {
           <label className="field-label">Maximum sources per run<input type="number" min="1" max="100" value={settings.maxSourcesPerRun} onChange={(event) => updateSetting('maxSourcesPerRun', Number(event.target.value))} /></label>
         </div>
         <dl>
-          <div><dt>Next scheduled scan</dt><dd>{configured ? nextScheduledScan(settings) : 'Automatic discovery is not configured'}</dd></div>
+          <div><dt>Next scheduled scan</dt><dd>{FIXED_DISCOVERY_SCHEDULE_LABEL}</dd></div>
           <div><dt>Last successful scan</dt><dd>{formatDiscoveryTimestamp(stats?.lastSuccessfulScanAt)}</dd></div>
           <div><dt>Last attempted scan</dt><dd>{formatDiscoveryTimestamp(stats?.lastAttemptedScanAt || latestRun?.createdAt)}</dd></div>
         </dl>
-        <button className="button primary" disabled={working} onClick={saveSchedule}>Save Discovery Schedule</button>
+        <div className="source-form-actions">
+          <button className="button primary" disabled={working} onClick={saveSchedule}>Save Discovery Schedule</button>
+          <a className="button secondary" href={RESEARCH_DISCOVERY_WORKFLOW_URL} target="_blank" rel="noreferrer">Open Research Discovery Workflow</a>
+        </div>
       </article>
 
       <article className="settings-card full-width discovery-source-card">
         <h2>Discovery Sources</h2>
-        <p>Adding a source saves its configuration only after a test preview. It does not start a full-site crawl.</p>
+        <p>Adding a source saves its configuration for the GitHub Actions discovery workflow. It does not start a full-site crawl.</p>
         <div className="settings-form-grid">
           <label className="field-label">Source name<input value={sourceDraft.name} onChange={(event) => updateSource('name', event.target.value)} placeholder="University scholarships page" /></label>
           <label className="field-label">URL<input type="url" value={sourceDraft.url} onChange={(event) => updateSource('url', event.target.value)} placeholder="https://..." /></label>
@@ -183,16 +171,11 @@ export default function DiscoverySettingsPanel() {
           <label className="switch-field"><input type="checkbox" checked={sourceDraft.enabled !== false} onChange={(event) => updateSource('enabled', event.target.checked)} /><span>Enabled</span></label>
         </div>
         <div className="source-form-actions">
-          <button className="button secondary" disabled={working || !configured || !sourceDraft.url} onClick={() => testSource()}>Test Source</button>
-          <button className="button primary" disabled={working || !canSaveSource || !sourceDraft.name || !sourceDraft.url} onClick={saveSource}>{editingExisting ? 'Update Source' : 'Save Source'}</button>
-          <button className="button secondary" disabled={working} onClick={() => { setSourceDraft(EMPTY_SOURCE); setPreview(null); }}>Clear</button>
+          <button className="button secondary" disabled={working || !sourceDraft.url} onClick={testSource}>Test Source</button>
+          <button className="button primary" disabled={working || !canSaveSource} onClick={saveSource}>{editingExisting ? 'Update Source' : 'Save Source'}</button>
+          <button className="button secondary" disabled={working} onClick={() => setSourceDraft(EMPTY_SOURCE)}>Clear</button>
         </div>
-        {preview?.preview?.length ? (
-          <div className="source-preview-list">
-            {preview.preview.slice(0, 3).map((item) => <article key={item.url || item.title}><strong>{item.title || 'Untitled record'}</strong><span>{item.category || sourceDraft.expectedCategory}</span><small>{item.url}</small></article>)}
-          </div>
-        ) : null}
-        {message ? <p className={message.includes('Could not') || message.includes('not configured') ? 'form-error' : 'status-message'}>{message}</p> : null}
+        {message ? <p className={message.includes('Could not') ? 'form-error' : 'status-message'}>{message}</p> : null}
         <div className="source-table">
           {sources.map((source) => (
             <article key={source.id} className="source-row-card">
@@ -203,14 +186,14 @@ export default function DiscoverySettingsPanel() {
                 <div><dt>Last successful</dt><dd>{formatDiscoveryTimestamp(source.lastSuccessfulAt)}</dd></div>
                 <div><dt>Results found</dt><dd>{source.resultCount || source.resultsFound || 0}</dd></div>
                 <div><dt>Health</dt><dd>{source.health || 'Not tested'}</dd></div>
-                <div><dt>Next scan</dt><dd>{configured && source.enabled !== false ? nextScheduledScan(settings) : 'Paused'}</dd></div>
+                <div><dt>Next scan</dt><dd>{source.enabled !== false ? FIXED_DISCOVERY_SCHEDULE_LABEL : 'Paused'}</dd></div>
               </dl>
               <div className="source-row-actions">
-                <button type="button" className="text-link" disabled={working || !configured} onClick={() => testSource(source)}>Test Source</button>
-                <button type="button" className="text-link" disabled={working || !configured} onClick={() => scanSource(source)}>Scan Now</button>
+                <button type="button" className="text-link" disabled={working} onClick={() => testSource(source)}>Test Source</button>
+                <button type="button" className="text-link" disabled={working} onClick={() => scanSource(source)}>Scan Now</button>
                 <button type="button" className="text-link" onClick={() => setMessage(`${source.name || source.url}: ${source.resultCount || source.resultsFound || 0} result(s) found in the last run.`)}>View Results</button>
                 <button type="button" className="text-link" onClick={() => setMessage(source.lastError ? `${source.name || source.url}: ${source.lastError}` : 'No errors recorded for this source.')}>View Errors</button>
-                <button type="button" className="text-link" onClick={() => { setSourceDraft(normalizeDraft(source)); setPreview(null); }}>Edit</button>
+                <button type="button" className="text-link" onClick={() => setSourceDraft(normalizeDraft(source))}>Edit</button>
                 <button type="button" className="text-link" onClick={() => pauseDiscoverySource(user.uid, source, source.enabled !== false)}>{source.enabled !== false ? 'Pause' : 'Resume'}</button>
                 <button type="button" className="text-link danger-link" onClick={() => removeSource(source)}>Delete</button>
               </div>

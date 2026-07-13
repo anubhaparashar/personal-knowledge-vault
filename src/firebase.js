@@ -18,9 +18,6 @@ export const googleApiKey = (import.meta.env.VITE_GOOGLE_API_KEY || '').trim();
 export const googlePickerAppId = googleOAuthClientId.split('-')[0] || '';
 export const googleDriveFolderId = (import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '').trim();
 export const googleApprovedEmail = (import.meta.env.VITE_GOOGLE_APPROVED_EMAIL || allowedEmail || '').trim().toLowerCase();
-export const urlImportEndpoint = (import.meta.env.VITE_URL_IMPORT_ENDPOINT || '').trim();
-export const discoveryRunEndpoint = (import.meta.env.VITE_DISCOVERY_RUN_ENDPOINT || '').trim();
-export const discoveryImportEndpoint = (import.meta.env.VITE_DISCOVERY_IMPORT_ENDPOINT || '').trim();
 export const firebaseStorageBucket = configuredStorageBucket;
 
 let app = null;

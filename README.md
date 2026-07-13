@@ -52,7 +52,7 @@ Enable these services in the Firebase project used by this repository:
 - Firebase Hosting, if deploying there
 - Firebase Storage
 
-The URL importer uses Firebase Cloud Functions. Cloud Functions deployment may require enabling billing for the Firebase project. If Functions are not deployed, the frontend still builds and the editor shows a clear URL import setup error.
+Scrape a Link uses Firestore queued requests processed by GitHub Actions. Instant scraping is disabled to keep the project free.
 
 ## Install
 
@@ -97,10 +97,7 @@ VITE_GOOGLE_OAUTH_CLIENT_ID
 VITE_GOOGLE_API_KEY
 VITE_GOOGLE_DRIVE_FOLDER_ID
 VITE_GOOGLE_APPROVED_EMAIL
-VITE_URL_IMPORT_ENDPOINT
 ```
-
-`VITE_URL_IMPORT_ENDPOINT` is optional until the URL importer Function is deployed.
 
 ## Firestore Rules
 
@@ -128,20 +125,11 @@ Deploy them with:
 firebase deploy --only storage:rules
 ```
 
-## URL Import Function
+## URL Import Queue
 
-Function source is in `functions/`. See `URL_IMPORT_SETUP.md` for deployment and CORS setup.
+`Scrape a Link` writes Firestore requests to `users/{uid}/discoveryRequests/{requestId}`. The `Research Discovery` GitHub Actions workflow processes those requests on the 06:00 IST / 18:00 IST schedule or when run manually.
 
-Short version:
-
-```bash
-cd functions
-npm install
-cd ..
-firebase deploy --only functions:importUrl
-```
-
-After deployment, set the generated HTTPS endpoint as `VITE_URL_IMPORT_ENDPOINT` in GitHub Actions repository variables and rerun the GitHub Pages workflow.
+No URL import endpoint variable is required. See `URL_IMPORT_SETUP.md`.
 
 ## Reminders
 
@@ -192,11 +180,10 @@ The workflow in `.github/workflows/deploy-pages.yml` installs with `npm ci`, bui
 
 After changing repository variables, rerun the workflow manually or push a commit to `main`.
 
-## Deploy Firebase Rules and Function
+## Deploy Firebase Rules
 
 ```bash
 firebase deploy --only firestore:rules,storage:rules
-firebase deploy --only functions:importUrl
 ```
 
 Deploy Hosting only if you use Firebase Hosting in addition to GitHub Pages:

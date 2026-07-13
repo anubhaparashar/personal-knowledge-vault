@@ -1379,7 +1379,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   }
   function sourceFailureMessage(error, sourceUrl) {
     const raw = error?.message || 'Could not import this link.';
-    if (/URL import endpoint is not configured/i.test(raw)) return 'Source enrichment backend is not configured.';
+    if (/Instant scraping is disabled/i.test(raw)) return 'Instant scraping is disabled to keep the project free. Requests are processed by GitHub Actions.';
     if (/Sign in before source enrichment/i.test(raw)) return 'Sign in before source enrichment.';
     if (isLinkedInUrl(sourceUrl)) return 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.';
     return raw;

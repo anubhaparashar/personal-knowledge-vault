@@ -41,14 +41,13 @@ function read(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 }
 
-run('Firebase discovery schedules are declared with Asia/Kolkata defaults', () => {
-  const functionsIndex = read('functions/index.js');
-  assert.match(functionsIndex, /scheduledFullDiscoveryScan/);
-  assert.match(functionsIndex, /schedule: '0 6,18 \* \* \*'/);
-  assert.match(functionsIndex, /scheduledExistingRecordRefresh/);
-  assert.match(functionsIndex, /schedule: '0 \*\/6 \* \* \*'/);
-  assert.match(functionsIndex, /timeZone: TZ/);
-  assert.match(functionsIndex, /Asia\/Kolkata/);
+run('GitHub Actions discovery schedules are declared for 06:00 and 18:00 IST', () => {
+  const workflow = read('.github/workflows/research-discovery.yml');
+  const discovery = read('src/services/discovery.js');
+  assert.match(workflow, /cron: "30 0 \* \* \*"/);
+  assert.match(workflow, /cron: "30 12 \* \* \*"/);
+  assert.match(discovery, /FIXED_DISCOVERY_SCHEDULE_LABEL = '06:00 IST \/ 18:00 IST'/);
+  assert.doesNotMatch(read('functions/index.js'), /onSchedule|scheduledFullDiscoveryScan|scheduledExistingRecordRefresh/);
 });
 
 run('GitHub Actions fallback uses requested cron and overlap protection', () => {
@@ -85,7 +84,7 @@ run('Manual entry menu includes all requested entry types and URL/file actions',
   ].forEach((label) => assert.match(manualEntry, new RegExp(label.replace(/[+]/g, '\\+'))));
 });
 
-run('Record origins and backend-not-configured state are represented in frontend', () => {
+run('Record origins and queue-based discovery state are represented in frontend', () => {
   const discovery = read('src/services/discovery.js');
   const dashboard = read('src/pages/DashboardPage.jsx');
   assert.match(discovery, /auto-discovered/);
@@ -93,8 +92,11 @@ run('Record origins and backend-not-configured state are represented in frontend
   assert.match(discovery, /imported-from-url/);
   assert.match(discovery, /imported-from-file/);
   assert.match(discovery, /scholarly-api/);
-  assert.match(dashboard, /Automatic discovery is not configured/);
-  assert.match(dashboard, /Discovery Control Centre/);
+  assert.match(discovery, /discoveryRequests/);
+  assert.match(dashboard, /GitHub Actions scheduled/);
+  assert.match(dashboard, /Queue-based, no Firebase Functions/);
+  assert.match(dashboard, /Instant scraping is disabled to keep the project free/);
+  assert.match(dashboard, /Open Research Discovery Workflow/);
   assert.match(dashboard, /Quick Refresh/);
   assert.match(dashboard, /Full Web Scan/);
   assert.match(dashboard, /Scrape a Link/);
@@ -102,7 +104,7 @@ run('Record origins and backend-not-configured state are represented in frontend
 });
 
 
-run('Firestore discovery run schema fields are written by backend', () => {
+run('GitHub Actions runner writes run logs and queued request statuses', () => {
   const functionsIndex = read('functions/index.js');
   [
     'runType',
@@ -121,23 +123,25 @@ run('Firestore discovery run schema fields are written by backend', () => {
     'datesDetected',
     'errorSummary',
   ].forEach((field) => assert.match(functionsIndex, new RegExp(field)));
-  assert.match(functionsIndex, /single-url/);
-  assert.match(functionsIndex, /cancel-run/);
+  assert.match(functionsIndex, /processQueuedDiscoveryRequests/);
+  assert.match(functionsIndex, /single-link/);
+  assert.match(functionsIndex, /quick-refresh/);
+  assert.match(functionsIndex, /single-source/);
+  assert.match(functionsIndex, /status: 'processing'/);
+  assert.match(functionsIndex, /status: 'completed'/);
+  assert.match(functionsIndex, /status: 'failed'/);
+  assert.doesNotMatch(functionsIndex, /onRequest|firebase-functions|cancel-run/);
 });
 
-run('Manual URL import exposes review actions and bounded stages', () => {
+run('Manual URL import queues link requests and exposes request statuses', () => {
   const modal = read('src/components/ImportFromLinkModal.jsx');
   [
-    'Import and Analyse Website',
-    'Validating link',
-    'Connecting to website',
-    'Ready for review',
-    'Save to Library',
-    'Save and Start Application',
-    'Edit Before Saving',
-    'Change Category',
-    'Add to Shared Inbox',
-    'Reanalyse',
+    'Scrape a Link',
+    'Queue Link',
+    'Open Workflow',
+    'Queued link requests',
+    'Instant scraping is disabled to keep the project free',
+    'requestStatusLabel',
   ].forEach((label) => assert.match(modal, new RegExp(label.replace(/[+]/g, '\\+'))));
 });
 
@@ -275,22 +279,21 @@ run('LinkedIn ACM TOMM fixture extracts only the main post and official source e
   assert.equal(dates[0].date, '2026-08-31');
   assert.equal(new Set(dates.map((date) => `${date.type}:${date.date || date.year + '-' + date.month}`)).size, 5);
 });
-run('Editor and backend expose truthful pasted-link source enrichment states', () => {
+run('Editor and Actions runner expose truthful free source enrichment states', () => {
   const editor = read('src/pages/EditorPage.jsx');
   const urlImport = read('src/services/urlImport.js');
   const functionsIndex = read('functions/index.js');
   const settings = read('src/pages/SettingsPage.jsx');
   assert.match(editor, /detectExternalUrls/);
   assert.match(editor, /Source enrichment:/);
-  assert.match(editor, /Source enriched - Official page retrieved/);
-  assert.match(editor, /LinkedIn did not allow complete automatic extraction/);
+  assert.match(editor, /Instant scraping is disabled to keep the project free/);
   assert.match(editor, /Enrich from detected link/);
   assert.match(editor, /Recheck source/);
-  assert.match(urlImport, /Authorization: `Bearer \$\{token\}`/);
-  assert.match(functionsIndex, /await requireUser\(req\)/);
-  assert.match(functionsIndex, /originalUrl: sourceUrl/);
-  assert.match(functionsIndex, /resolvedUrl: finalUrl/);
-  assert.match(functionsIndex, /partial: true/);
+  assert.match(urlImport, /Requests are processed by GitHub Actions/);
+  assert.doesNotMatch(urlImport, /VITE_URL_IMPORT_ENDPOINT|Authorization: `Bearer/);
+  assert.match(functionsIndex, /discoverFromUrl/);
+  assert.match(functionsIndex, /saveRecords/);
+  assert.match(functionsIndex, /processQueuedDiscoveryRequests/);
   assert.match(settings, /Automatically enrich pasted links/);
 });
 const failed = results.filter((result) => !result.ok);

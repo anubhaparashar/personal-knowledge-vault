@@ -1,10 +1,7 @@
-import crypto from 'node:crypto';
+﻿import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import admin from 'firebase-admin';
-import { onRequest } from 'firebase-functions/v2/https';
-import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logger } from 'firebase-functions';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import sanitizeHtml from 'sanitize-html';
@@ -19,6 +16,7 @@ import {
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 const FieldValue = admin.firestore.FieldValue;
+const logger = { warn: (...args) => console.warn('[discovery]', ...args), info: (...args) => console.log('[discovery]', ...args) };
 const TZ = 'Asia/Kolkata';
 const MAX_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 12000;
@@ -1142,196 +1140,163 @@ async function runConfigTick() {
     }
   }
 }
-export const runDiscovery = onRequest({ timeoutSeconds: 540, memory: '1GiB', maxInstances: 3 }, async (req, res) => {
-  const corsOk = applyCors(req, res);
-  if (req.method === 'OPTIONS') return res.status(corsOk ? 204 : 403).send('');
-  if (!corsOk) return json(res, 403, { ok: false, error: 'This origin is not allowed to use discovery.' });
-  if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'Use POST.' });
+function timestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+async function updateDiscoveryRequest(requestRef, patch) {
+  await requestRef.set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+async function executeSingleLinkRequest(uid, requestRef, request) {
+  const sourceUrl = String(request.sourceUrl || request.url || '').trim();
+  if (!sourceUrl) throw new Error('Queued link request is missing sourceUrl.');
+  const runRef = userRef(uid).collection('discoveryRuns').doc();
+  const source = { id: requestRef.id, name: 'Queued link request', url: sourceUrl, type: 'Public webpage', expectedCategory: request.expectedCategory || '' };
+  const warnings = [];
+  const stats = { sourcesTotal: 1, sourcesChecked: 0, sourcesSucceeded: 0, recordsFound: 0, newRecords: 0, updatedRecords: 0, duplicates: 0, datesDetected: 0, failures: 0 };
+  await updateDiscoveryRequest(requestRef, { status: 'processing', statusLabel: 'Processing', runId: runRef.id, startedAt: FieldValue.serverTimestamp() });
+  await runRef.set({
+    runType: 'single-url',
+    mode: 'single-link',
+    trigger: 'queued-link-request',
+    requestId: requestRef.id,
+    status: 'queued',
+    step: 'queued',
+    requestedBy: uid,
+    requestedAt: request.requestedAt || request.createdAt || FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
+    startedAt: null,
+    completedAt: null,
+    timezone: TZ,
+    currentStage: URL_IMPORT_STAGES.validating,
+    currentSource: sourceUrl,
+    sourcesTotal: 1,
+    sourcesChecked: 0,
+    recordsFound: 0,
+    recordsCreated: 0,
+    recordsUpdated: 0,
+    duplicatesSkipped: 0,
+    datesDetected: 0,
+    warnings: 0,
+    warningMessages: [],
+    failures: 0,
+    errorSummary: null,
+    stats: {},
+  });
   try {
-    const decoded = await requireUser(req);
-    const action = req.body?.action || 'start-run';
-    if (action === 'test-source') {
-      const source = req.body?.source || {};
-      if (!source.url) throw new Error('Source URL is required.');
-      const preview = await discoverFromSource(source, { limit: 3 });
-      return json(res, 200, { ok: true, preview });
-    }
-    if (action === 'scan-source') {
-      const sourceId = String(req.body?.sourceId || '').trim();
-      if (!sourceId) throw new Error('Source ID is required.');
-      return json(res, 200, { ok: true, ...(await executeRun(decoded.uid, { mode: 'full', trigger: 'manual-source', sourceId })) });
-    }
-    if (action === 'cancel-run') {
-      const runId = String(req.body?.runId || '').trim();
-      if (!runId) throw new Error('Run ID is required.');
-      const runRef = userRef(decoded.uid).collection('discoveryRuns').doc(runId);
-      const lockRef = userRef(decoded.uid).collection('discovery').doc('scanLock');
-      await db.runTransaction(async (transaction) => {
-        const run = await transaction.get(runRef);
-        if (!run.exists) throw new Error('Discovery run was not found.');
-        if (run.data()?.status !== 'queued') throw new Error('Only queued scans can be cancelled safely.');
-        transaction.set(runRef, { status: 'cancelled', step: 'cancelled', currentStage: 'Cancelled', completedAt: FieldValue.serverTimestamp(), errorSummary: null, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-        const lock = await transaction.get(lockRef);
-        if (lock.exists && lock.data()?.runId === runId) transaction.set(lockRef, { active: false, releasedAt: FieldValue.serverTimestamp() }, { merge: true });
-      });
-      return json(res, 200, { ok: true, runId, status: 'cancelled' });
-    }
-    const mode = req.body?.mode === 'full' ? 'full' : 'quick';
-    return json(res, 200, { ok: true, ...(await executeRun(decoded.uid, { mode, trigger: 'manual' })) });
-  } catch (error) {
-    logger.warn('Discovery request failed', { message: error.message });
-    return json(res, error.status || 400, { ok: false, error: error.message || 'Discovery request failed.' });
-  }
-});
-export const importDiscoveryUrl = onRequest({ timeoutSeconds: 45, memory: '512MiB', maxInstances: 5 }, async (req, res) => {
-  const corsOk = applyCors(req, res);
-  if (req.method === 'OPTIONS') return res.status(corsOk ? 204 : 403).send('');
-  if (!corsOk) return json(res, 403, { ok: false, error: 'This origin is not allowed to use URL discovery.' });
-  if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'Use POST.' });
-  let runRef = null;
-  try {
-    const decoded = await requireUser(req);
-    const sourceUrl = String(req.body?.url || '').trim();
-    if (!sourceUrl) throw new Error('Missing URL.');
-    runRef = userRef(decoded.uid).collection('discoveryRuns').doc();
-    await runRef.set({
-      runType: 'single-url',
-      mode: 'single-url',
-      trigger: 'manual-url-import',
-      status: 'queued',
-      step: 'queued',
-      requestedBy: decoded.uid,
-      requestedAt: FieldValue.serverTimestamp(),
-      createdAt: FieldValue.serverTimestamp(),
-      startedAt: null,
-      completedAt: null,
-      timezone: TZ,
-      currentStage: URL_IMPORT_STAGES.validating,
-      currentSource: sourceUrl,
-      sourcesTotal: 1,
-      sourcesChecked: 0,
-      recordsFound: 0,
-      recordsCreated: 0,
-      recordsUpdated: 0,
-      duplicatesSkipped: 0,
-      datesDetected: 0,
-      warnings: 0,
-      warningMessages: [],
-      failures: 0,
-      errorSummary: null,
-      stats: {},
-    });
+    await userRef(uid).collection('discovery').doc('stats').set({ lastAttemptedScanAt: FieldValue.serverTimestamp(), lastRunId: runRef.id }, { merge: true });
     await updateRun(runRef, { status: 'running', startedAt: FieldValue.serverTimestamp(), currentStage: URL_IMPORT_STAGES.connecting, step: 'connecting' });
     await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.reading, step: 'reading-page' });
-    const supplied = { title: req.body?.title || '', text: req.body?.text || '', sharedText: req.body?.sharedText || '' };
-    const preview = await discoverFromUrl(sourceUrl, { name: 'Imported URL', type: 'Public webpage', expectedCategory: '' }, supplied);
+    const supplied = { title: request.title || '', text: request.text || '', sharedText: request.sharedText || '' };
+    const record = await discoverFromUrl(sourceUrl, source, supplied);
     await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.extracting, step: 'extracting-content', recordsFound: 1 });
-    await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.identifying, step: 'identifying-content-type' });
-    await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.category, step: 'generating-category' });
-    await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.tags, step: 'generating-tags' });
-    await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.dates, step: 'detecting-dates', datesDetected: (preview.importantDates || []).length });
+    await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.dates, step: 'detecting-dates', datesDetected: (record.importantDates || []).length });
     await updateRun(runRef, { currentStage: URL_IMPORT_STAGES.duplicates, step: 'checking-duplicates' });
-    const canonical = preview.canonicalUrl || preview.sourceUrl || sourceUrl;
-    const duplicateSnapshot = await userRef(decoded.uid).collection('pages').where('sourceUrl', '==', canonical).limit(1).get();
-    const duplicate = duplicateSnapshot.docs[0] ? { id: duplicateSnapshot.docs[0].id, title: duplicateSnapshot.docs[0].data()?.title || 'Existing entry' } : null;
-    const warnings = [];
-    if (preview.extractionBlocked) warnings.push(preview.metadata?.platformMessage || 'The platform did not allow automatic page extraction. The supplied text and link were saved.');
-    if (duplicate) warnings.push(`Possible duplicate: ${duplicate.title}`);
-    const finalPreview = { ...preview, duplicateWarning: duplicate ? `Possible duplicate: ${duplicate.title}` : '', duplicateOf: duplicate, extractionConfidence: preview.extractionBlocked ? 0.25 : Math.max(preview.relevanceScore || 0, preview.categoryConfidence || 0.4) };
-    await updateRun(runRef, { status: warnings.length ? 'completed-with-warnings' : 'completed', step: warnings.length ? 'completed-with-warnings' : 'completed', currentStage: URL_IMPORT_STAGES.ready, currentSource: null, sourcesChecked: 1, recordsFound: 1, datesDetected: (preview.importantDates || []).length, warnings: warnings.length, warningMessages: warnings, errorSummary: warnings[0] || null, stats: { recordsFound: 1, datesDetected: (preview.importantDates || []).length, duplicatesSkipped: duplicate ? 1 : 0 }, completedAt: FieldValue.serverTimestamp() });
-    return json(res, 200, { ok: true, runId: runRef.id, stages: Object.values(URL_IMPORT_STAGES), preview: finalPreview });
-  } catch (error) {
-    if (runRef) await updateRun(runRef, { status: 'failed', step: 'failed', currentStage: 'Failed', failures: 1, errorSummary: error.message, completedAt: FieldValue.serverTimestamp() });
-    logger.warn('Discovery URL import failed', { message: error.message });
-    return json(res, error.status || 400, { ok: false, error: error.message || 'URL import failed.' });
-  }
-});
-export const importUrl = onRequest({ timeoutSeconds: 30, memory: '512MiB', maxInstances: 5 }, async (req, res) => {
-  const corsOk = applyCors(req, res);
-  if (req.method === 'OPTIONS') return res.status(corsOk ? 204 : 403).send('');
-  if (!corsOk) return json(res, 403, { ok: false, error: 'This origin is not allowed to use the URL import endpoint.' });
-  if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'Use POST to import a URL.' });
-  let sourceUrl = '';
-  try {
-    const decoded = await requireUser(req);
-    checkImportRateLimit(decoded.uid);
-    sourceUrl = String(req.body?.url || '').trim();
-    if (!sourceUrl) throw new Error('Missing URL.');
-    const supplied = { title: req.body?.title || '', text: req.body?.text || '', sharedText: req.body?.sharedText || '' };
-    if (isLinkedInPostUrl(sourceUrl) || isLinkedInUrl(sourceUrl)) {
-      const linkedInPreview = await importLinkedInUrl(sourceUrl, supplied, decoded.uid);
-      return json(res, 200, linkedInPreview);
-    }
-    const { html, finalUrl, contentType, redirectChain = [] } = await fetchSafe(sourceUrl);
-    const extracted = extractPage(html, finalUrl);
-    const canonicalUrl = extracted.canonicalUrl || extracted.metadata?.canonicalUrl || finalUrl;
-    const duplicate = await findUrlImportDuplicate(decoded.uid, [canonicalUrl, sourceUrl, finalUrl]);
-    return json(res, 200, {
-      ok: true,
-      originalUrl: sourceUrl,
-      resolvedUrl: finalUrl,
-      finalUrl,
-      canonicalUrl,
-      contentType,
-      redirectChain,
-      checkedAt: new Date().toISOString(),
-      duplicateOf: duplicate,
-      duplicateWarning: duplicate ? `This call may already exist in your vault: ${duplicate.title}` : '',
-      ...extracted,
-      canonicalUrl,
-      metadata: {
-        ...(extracted.metadata || {}),
-        canonicalUrl,
-        originalUrl: sourceUrl,
-        resolvedUrl: finalUrl,
-        finalUrl,
-      },
+    if (record.extractionBlocked) warnings.push(record.metadata?.platformMessage || 'The platform did not allow complete automatic extraction. The supplied link was preserved.');
+    const saved = await saveRecords(uid, [record], source, warnings);
+    stats.sourcesChecked = 1;
+    stats.sourcesSucceeded = 1;
+    stats.recordsFound = 1;
+    stats.newRecords = saved.newRecords;
+    stats.updatedRecords = saved.updatedRecords;
+    stats.duplicates = saved.duplicates;
+    stats.datesDetected = saved.datesDetected;
+    const finalStatus = warnings.length ? 'completed-with-warnings' : 'completed';
+    await updateRun(runRef, {
+      status: finalStatus,
+      step: finalStatus,
+      currentStage: finalStatus === 'completed' ? URL_IMPORT_STAGES.ready : 'Completed with warnings',
+      currentSource: null,
+      sourcesChecked: 1,
+      recordsFound: 1,
+      recordsCreated: stats.newRecords,
+      recordsUpdated: stats.updatedRecords,
+      duplicatesSkipped: stats.duplicates,
+      datesDetected: stats.datesDetected,
+      warnings: warnings.length,
+      warningMessages: warnings,
+      failures: 0,
+      errorSummary: warnings[0] || null,
+      stats,
+      completedAt: FieldValue.serverTimestamp(),
     });
+    await userRef(uid).collection('discovery').doc('stats').set({
+      lastAttemptedScanAt: FieldValue.serverTimestamp(),
+      lastSuccessfulScanAt: FieldValue.serverTimestamp(),
+      lastSuccessfulRunId: runRef.id,
+      verifiedBackendAt: FieldValue.serverTimestamp(),
+      newRecords: stats.newRecords,
+      updatedRecords: stats.updatedRecords,
+      duplicatesSkipped: stats.duplicates,
+      warnings: warnings.length,
+      failures: 0,
+      lastRunId: runRef.id,
+    }, { merge: true });
+    await updateDiscoveryRequest(requestRef, {
+      status: 'completed',
+      statusLabel: 'Completed',
+      completedAt: FieldValue.serverTimestamp(),
+      error: '',
+      stats,
+      warnings,
+    });
+    return { runId: runRef.id, status: finalStatus, stats, warnings };
   } catch (error) {
-    const platform = sourceUrl ? blockedPlatform(sourceUrl) : '';
-    if (platform) {
-      const message = platform === 'LinkedIn'
-        ? 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.'
-        : `${platform} did not allow complete automatic extraction. The shared text and link were saved.`;
-      return json(res, 200, {
-        ok: true,
-        partial: true,
-        extractionBlocked: true,
-        extractionStatus: 'partial',
-        originalUrl: sourceUrl,
-        resolvedUrl: sourceUrl,
-        finalUrl: sourceUrl,
-        canonicalUrl: sourceUrl,
-        title: `${platform} shared link`,
-        html: plainHtml(`Original link: ${sourceUrl}`),
-        text: '',
-        summary: message,
-        checkedAt: new Date().toISOString(),
-        error: error.message || 'Automatic source extraction was blocked.',
-        metadata: {
-          sourceName: platform,
-          canonicalUrl: sourceUrl,
-          originalUrl: sourceUrl,
-          resolvedUrl: sourceUrl,
-          finalUrl: sourceUrl,
-          extractionBlocked: true,
-          platformMessage: message,
-        },
-      });
-    }
-    logger.warn('URL import failed', { message: error.message });
-    return json(res, error.status || 400, { ok: false, error: error.message || 'URL import failed.' });
+    stats.failures = 1;
+    await updateRun(runRef, { status: 'failed', step: 'failed', currentStage: 'Failed', currentSource: null, error: error.message, errorSummary: error.message, stats, failures: 1, completedAt: FieldValue.serverTimestamp() });
+    await userRef(uid).collection('discovery').doc('stats').set({ lastAttemptedScanAt: FieldValue.serverTimestamp(), lastError: error.message, lastRunId: runRef.id, failures: 1 }, { merge: true });
+    await updateDiscoveryRequest(requestRef, { status: 'failed', statusLabel: 'Failed', runId: runRef.id, error: error.message, completedAt: FieldValue.serverTimestamp() });
+    throw error;
   }
-});
-export const scheduledFullDiscoveryScan = onSchedule({ schedule: '0 6,18 * * *', timeZone: TZ, timeoutSeconds: 540, memory: '1GiB' }, async () => {
-  await runScheduled('full', 'scheduled-default-full');
-});
-export const scheduledExistingRecordRefresh = onSchedule({ schedule: '0 */6 * * *', timeZone: TZ, timeoutSeconds: 540, memory: '1GiB' }, async () => {
-  await runScheduled('quick', 'scheduled-default-refresh');
-});
-export const scheduledDiscoveryConfigTick = onSchedule({ schedule: 'every 15 minutes', timeZone: TZ, timeoutSeconds: 540, memory: '1GiB' }, async () => {
-  await runConfigTick();
-});
+}
+async function executeQueuedRunRequest(uid, requestRef, request) {
+  const type = request.type || '';
+  const sourceId = String(request.sourceId || '').trim();
+  if (type === 'single-source' && !sourceId) throw new Error('Queued source scan is missing sourceId.');
+  const mode = type === 'quick-refresh' ? 'quick' : 'full';
+  const trigger = type === 'quick-refresh' ? 'queued-quick-refresh' : 'queued-source-scan';
+  await updateDiscoveryRequest(requestRef, { status: 'processing', statusLabel: 'Processing', startedAt: FieldValue.serverTimestamp() });
+  try {
+    const result = await executeRun(uid, { mode, trigger, sourceId });
+    await updateDiscoveryRequest(requestRef, { status: 'completed', statusLabel: 'Completed', runId: result.runId, completedAt: FieldValue.serverTimestamp(), stats: result.stats || {}, warnings: result.warnings || [] });
+    return result;
+  } catch (error) {
+    await updateDiscoveryRequest(requestRef, { status: 'failed', statusLabel: 'Failed', error: error.message, completedAt: FieldValue.serverTimestamp() });
+    throw error;
+  }
+}
+async function processQueuedDiscoveryRequests(uid) {
+  const snapshot = await userRef(uid).collection('discoveryRequests').where('status', '==', 'queued').limit(25).get();
+  const queued = snapshot.docs.sort((a, b) => timestampMillis(a.data().createdAt || a.data().requestedAt) - timestampMillis(b.data().createdAt || b.data().requestedAt));
+  const results = [];
+  for (const doc of queued) {
+    const request = { id: doc.id, ...doc.data() };
+    try {
+      if (request.type === 'single-link') results.push({ requestId: doc.id, ...(await executeSingleLinkRequest(uid, doc.ref, request)) });
+      else if (request.type === 'quick-refresh' || request.type === 'single-source') results.push({ requestId: doc.id, ...(await executeQueuedRunRequest(uid, doc.ref, request)) });
+      else await updateDiscoveryRequest(doc.ref, { status: 'failed', statusLabel: 'Failed', error: `Unsupported discovery request type: ${request.type || 'unknown'}`, completedAt: FieldValue.serverTimestamp() });
+    } catch (error) {
+      logger.warn('Queued discovery request failed', { uid, requestId: doc.id, type: request.type, message: error.message });
+    }
+  }
+  return results;
+}
 export async function runDiscoveryForConfiguredUsers(scanType = process.env.DISCOVERY_SCAN_TYPE || 'full') {
-  await runScheduled(scanType === 'quick' ? 'quick' : 'full', 'github-actions');
+  const mode = scanType === 'quick' ? 'quick' : 'full';
+  for (const uid of await configuredUserIds()) {
+    try {
+      await seedDefaultDiscoverySources(uid);
+      await executeRun(uid, { mode, trigger: 'github-actions' });
+    } catch (error) {
+      logger.warn('GitHub Actions discovery scan failed', { uid, mode, message: error.message });
+    }
+    try {
+      await processQueuedDiscoveryRequests(uid);
+    } catch (error) {
+      logger.warn('GitHub Actions queued request processing failed', { uid, message: error.message });
+    }
+  }
 }

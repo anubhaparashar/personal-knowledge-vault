@@ -8,6 +8,7 @@ import {
   Copy,
   Edit3,
   Eye,
+  ExternalLink,
   FileArchive,
   FileText,
   Files,
@@ -44,18 +45,20 @@ import { useAuth } from '../context/AuthContext';
 import { removePage } from '../services/pages';
 import {
   DISCOVERY_PROGRESS_LABELS,
+  DISCOVERY_QUEUE_MESSAGE,
   DEFAULT_DISCOVERY_SETTINGS,
-  cancelDiscoveryRun,
-  discoveryAutomaticStatus,
+  FIXED_DISCOVERY_SCHEDULE_LABEL,
+  GITHUB_ACTIONS_DISCOVERY_MESSAGE,
+  RESEARCH_DISCOVERY_WORKFLOW_URL,
   formatDiscoveryTimestamp,
-  hasVerifiedDiscoveryScan,
   isActiveDiscoveryRun,
-  isDiscoveryBackendConfigured,
-  nextScheduledScan,
   originLabel,
   originTone,
+  requestStatusLabel,
+  requestTypeLabel,
   scanDiscoverySource,
   startDiscoveryRun,
+  subscribeDiscoveryRequests,
   subscribeDiscoverySettings,
   subscribeDiscoverySources,
   subscribeDiscoveryStats,
@@ -377,15 +380,15 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const noDeadlineMode = deadlineTimeFilter === 'No deadline recorded';
   const deadlineRows = noDeadlineMode ? [] : filteredDeadlines.slice(0, 10);
   const noDeadlineRows = noDeadlineMode ? pagesWithoutDeadlines.slice(0, 10) : [];
-  const discoveryConfigured = isDiscoveryBackendConfigured();
   const enabledSources = discoverySources.filter((source) => source.enabled !== false && !source.paused);
   const enabledSourceCount = enabledSources.length;
-  const discoveryVerified = hasVerifiedDiscoveryScan(discoveryStats, discoverySources);
-  const automaticDiscoveryLabel = discoveryAutomaticStatus(discoverySettings, discoveryStats, discoverySources);
+  const queuedDiscoveryRequests = discoveryRequests.filter((request) => ['queued', 'processing'].includes(request.status));
+  const queuedLinkRequests = discoveryRequests.filter((request) => request.type === 'single-link').slice(0, 4);
+  const automaticDiscoveryLabel = 'GitHub Actions scheduled';
   const discoveryRunStatus = latestDiscoveryRun?.status || 'idle';
   const discoveryStatusLabel = latestDiscoveryRun?.currentStage || DISCOVERY_PROGRESS_LABELS[latestDiscoveryRun?.step] || DISCOVERY_PROGRESS_LABELS[discoveryRunStatus] || 'Idle';
   const discoveryActive = isActiveDiscoveryRun(latestDiscoveryRun);
-  const currentActivity = discoveryActive ? (discoveryRunStatus === 'queued' ? 'Queued' : 'Running') : 'Idle';
+  const currentActivity = discoveryActive ? (discoveryRunStatus === 'queued' ? 'Queued' : 'Running') : (queuedDiscoveryRequests.length ? `${queuedDiscoveryRequests.length} queued request(s)` : 'Idle');
   const latestWarnings = Array.isArray(latestDiscoveryRun?.warningMessages) ? latestDiscoveryRun.warningMessages.length : (Array.isArray(latestDiscoveryRun?.warnings) ? latestDiscoveryRun.warnings.length : Number(latestDiscoveryRun?.warnings || discoveryStats?.warnings || 0));
   const latestStats = latestDiscoveryRun?.stats || {};
   const contextEntry = entryTypeForFocus(focus);
@@ -415,58 +418,29 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
 
   async function runDiscovery(mode) {
     setDiscoveryMessage('');
-    if (!isDiscoveryBackendConfigured()) {
-      setDiscoveryMessage('Manual scanning backend is not configured. Deploy the Firebase Functions and set the discovery endpoints.');
+    if (mode === 'full') {
+      setDiscoveryMessage(GITHUB_ACTIONS_DISCOVERY_MESSAGE);
       return;
-    }
-    if (isActiveDiscoveryRun(latestDiscoveryRun)) {
-      setDiscoveryMessage('A discovery scan is already running. Wait for it to finish before starting another.');
-      return;
-    }
-    if (mode === 'full' && latestDiscoveryRun?.completedAt) {
-      const completedAt = latestDiscoveryRun.completedAt?.toDate ? latestDiscoveryRun.completedAt.toDate() : new Date(latestDiscoveryRun.completedAt);
-      if (!Number.isNaN(completedAt.getTime()) && Date.now() - completedAt.getTime() < 30 * 60 * 1000) {
-        const confirmed = window.confirm('A discovery scan completed in the last 30 minutes. Start another full web scan?');
-        if (!confirmed) return;
-      }
     }
     try {
-      const result = await startDiscoveryRun(user, mode);
-      setDiscoveryMessage(result.runId ? `${mode === 'full' ? 'Full web scan' : 'Quick refresh'} started. Progress is read from the backend run record.` : 'Discovery run completed.');
+      await startDiscoveryRun(user, 'quick');
+      setDiscoveryMessage(DISCOVERY_QUEUE_MESSAGE);
     } catch (error) {
-      setDiscoveryMessage(error.message || 'Could not start discovery.');
+      setDiscoveryMessage(error.message || 'Could not queue discovery.');
     }
   }
 
   async function scanSelectedSource() {
     setDiscoveryMessage('');
-    if (!isDiscoveryBackendConfigured()) {
-      setDiscoveryMessage('Manual scanning backend is not configured. Deploy the Firebase Functions and set the discovery endpoints.');
-      return;
-    }
     if (!selectedDiscoverySourceId) {
       setDiscoveryMessage('No enabled source is selected. Add or enable a source in Settings.');
       return;
     }
-    if (isActiveDiscoveryRun(latestDiscoveryRun)) {
-      setDiscoveryMessage('A discovery scan is already running. Wait for it to finish before scanning one source.');
-      return;
-    }
     try {
-      const result = await scanDiscoverySource(user, selectedDiscoverySourceId);
-      setDiscoveryMessage(result.runId ? 'Single-source scan started. Progress is read from the backend run record.' : 'Single-source scan completed.');
+      await scanDiscoverySource(user, selectedDiscoverySourceId);
+      setDiscoveryMessage(DISCOVERY_QUEUE_MESSAGE);
     } catch (error) {
-      setDiscoveryMessage(error.message || 'Could not scan this source.');
-    }
-  }
-
-  async function cancelQueuedRun() {
-    if (!latestDiscoveryRun?.id) return;
-    try {
-      await cancelDiscoveryRun(user, latestDiscoveryRun.id);
-      setDiscoveryMessage('Queued discovery scan cancelled.');
-    } catch (error) {
-      setDiscoveryMessage(error.message || 'Could not cancel this queued scan.');
+      setDiscoveryMessage(error.message || 'Could not queue this source scan.');
     }
   }
 
@@ -504,22 +478,23 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           <div className="control-centre-actions">
             <NewEntryMenu onImportFromLink={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))} />
             <SecondaryButton onClick={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))}><Link2 size={16} /> Scrape a Link</SecondaryButton>
-            <SecondaryButton disabled={!discoveryConfigured || discoveryActive} onClick={() => runDiscovery('quick')}><RefreshCw size={16} /> Quick Refresh</SecondaryButton>
-            <PrimaryButton disabled={!discoveryConfigured || discoveryActive} onClick={() => runDiscovery('full')}><RefreshCw size={16} /> Full Web Scan</PrimaryButton>
-            <label className="source-select-control"><span>Source</span><select value={selectedDiscoverySourceId} onChange={(event) => setSelectedDiscoverySourceId(event.target.value)} disabled={!enabledSources.length || discoveryActive}>{enabledSources.map((source) => <option key={source.id} value={source.id}>{source.name || source.url}</option>)}</select></label>
-            <SecondaryButton disabled={!discoveryConfigured || discoveryActive || !selectedDiscoverySourceId} onClick={scanSelectedSource}>Scan One Source</SecondaryButton>
+            <SecondaryButton onClick={() => runDiscovery('quick')}><RefreshCw size={16} /> Quick Refresh</SecondaryButton>
+            <PrimaryButton onClick={() => runDiscovery('full')}><RefreshCw size={16} /> Full Web Scan</PrimaryButton>
+            <SecondaryButton as="a" href={RESEARCH_DISCOVERY_WORKFLOW_URL} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open Research Discovery Workflow</SecondaryButton>
+            <label className="source-select-control"><span>Source</span><select value={selectedDiscoverySourceId} onChange={(event) => setSelectedDiscoverySourceId(event.target.value)} disabled={!enabledSources.length}>{enabledSources.map((source) => <option key={source.id} value={source.id}>{source.name || source.url}</option>)}</select></label>
+            <SecondaryButton disabled={!selectedDiscoverySourceId} onClick={scanSelectedSource}>Scan One Source</SecondaryButton>
             <SecondaryButton as="a" href="#/settings">Manage Sources</SecondaryButton>
             <SecondaryButton onClick={() => setRunLogOpen((value) => !value)}>View Run Log</SecondaryButton>
           </div>
         )}>
-          {!discoveryConfigured ? <div className="alert-panel warning"><strong>Manual scanning backend is not configured</strong><span>Deploy Firebase Functions and set the discovery endpoint variables before using manual web scans.</span></div> : null}
-          {!discoveryVerified ? <p className="form-error">Automatic discovery is not configured. A source-backed scan must complete successfully before this dashboard can show Enabled.</p> : null}
-          <p className="section-intro">Discovery coverage is based on enabled sources.</p>
+          <div className="alert-panel warning"><strong>Free discovery mode</strong><span>Instant scraping is disabled to keep the project free. Requests are processed by GitHub Actions.</span></div>
+          <p className="section-intro">Discovery coverage is based on enabled sources and queued Firestore requests.</p>
           <div className="discovery-status-grid">
             <article><span>Automatic Discovery</span><strong>{automaticDiscoveryLabel}</strong></article>
+            <article><span>Manual scanning</span><strong>Queue-based, no Firebase Functions</strong></article>
+            <article><span>Next scheduled scan</span><strong>{FIXED_DISCOVERY_SCHEDULE_LABEL}</strong></article>
             <article><span>Last attempted scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastAttemptedScanAt || latestDiscoveryRun?.requestedAt || latestDiscoveryRun?.createdAt)}</strong></article>
             <article><span>Last successful scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastSuccessfulScanAt)}</strong></article>
-            <article><span>Next scheduled scan</span><strong>{automaticDiscoveryLabel === 'Enabled' ? nextScheduledScan(discoverySettings) : automaticDiscoveryLabel}</strong></article>
             <article><span>Current activity</span><strong>{currentActivity}</strong></article>
             <article><span>Sources enabled</span><strong>{enabledSourceCount}</strong></article>
             <article><span>Sources checked</span><strong>{latestDiscoveryRun?.sourcesChecked ?? latestStats.sourcesChecked ?? discoveryStats?.sourcesChecked ?? 0}</strong></article>
@@ -531,9 +506,17 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           </div>
           {discoveryActive ? <p className="status-message">{latestDiscoveryRun?.runType === 'manual-full' ? 'Full web scan in progress' : 'Discovery scan in progress'}{latestDiscoveryRun?.currentSource ? ` - ${latestDiscoveryRun.currentStage || 'Checking'}: ${latestDiscoveryRun.currentSource}` : ` - ${discoveryStatusLabel}`}</p> : null}
           {!discoveryActive && latestDiscoveryRun ? <p className="status-message">Latest run: {discoveryStatusLabel}</p> : null}
-          {latestDiscoveryRun?.status === 'queued' ? <SecondaryButton onClick={cancelQueuedRun}>Cancel queued scan</SecondaryButton> : null}
-          {discoveryMessage ? <p className={discoveryMessage.includes('not configured') || discoveryMessage.includes('Could not') || discoveryMessage.includes('No enabled') ? 'form-error' : 'status-message'}>{discoveryMessage}</p> : null}
-          {!discoveryConfigured || !discoveryVerified ? <a className="button secondary" href="#/settings">View Setup Instructions</a> : null}
+          {discoveryMessage ? <p className={discoveryMessage.includes('Could not') || discoveryMessage.includes('No enabled') ? 'form-error' : 'status-message'}>{discoveryMessage}</p> : null}
+          {queuedLinkRequests.length ? (
+            <div className="request-status-list compact" aria-label="Queued link request status">
+              {queuedLinkRequests.map((request) => (
+                <article key={request.id}>
+                  <div><strong>{request.sourceUrl || request.url || request.title || 'Queued link'}</strong><span>{requestTypeLabel(request.type)} - {formatDiscoveryTimestamp(request.updatedAt || request.createdAt)}</span></div>
+                  <span className={`request-status ${request.status || 'queued'}`}>{requestStatusLabel(request.status)}</span>
+                </article>
+              ))}
+            </div>
+          ) : null}
           {runLogOpen ? (
             <div className="run-log-panel">
               <dl>

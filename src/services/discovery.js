@@ -1,5 +1,10 @@
-import { auth, db, discoveryImportEndpoint, discoveryRunEndpoint, firebaseNamespace } from '../firebase';
+﻿import { db, firebaseNamespace } from '../firebase';
 import { withFirestoreWriteTimeout } from './pages';
+
+export const RESEARCH_DISCOVERY_WORKFLOW_URL = 'https://github.com/anubhaparashar/personal-knowledge-vault/actions/workflows/research-discovery.yml';
+export const DISCOVERY_QUEUE_MESSAGE = 'Queued for discovery. Run Research Discovery workflow now, or it will process at the next scheduled scan.';
+export const GITHUB_ACTIONS_DISCOVERY_MESSAGE = 'Full scan runs through GitHub Actions. Click Open Workflow to run it now.';
+export const FIXED_DISCOVERY_SCHEDULE_LABEL = '06:00 IST / 18:00 IST';
 
 export const DEFAULT_DISCOVERY_SETTINGS = {
   automaticDiscoveryEnabled: true,
@@ -13,6 +18,7 @@ export const DEFAULT_DISCOVERY_SETTINGS = {
 
 export const DISCOVERY_PROGRESS_LABELS = {
   queued: 'Queued',
+  processing: 'Processing',
   running: 'Running',
   'loading-active-records': 'Loading active records',
   'rechecking-sources': 'Rechecking sources',
@@ -38,6 +44,19 @@ export const DISCOVERY_PROGRESS_LABELS = {
   'completed-with-warnings': 'Completed with warnings',
   failed: 'Failed',
   cancelled: 'Cancelled',
+};
+
+export const DISCOVERY_REQUEST_STATUS_LABELS = {
+  queued: 'Queued',
+  processing: 'Processing',
+  completed: 'Completed',
+  failed: 'Failed',
+};
+
+export const DISCOVERY_REQUEST_TYPE_LABELS = {
+  'single-link': 'Link scrape',
+  'quick-refresh': 'Quick refresh',
+  'single-source': 'Source scan',
 };
 
 export const SOURCE_TYPES = [
@@ -83,6 +102,16 @@ function runsCollection(uid) {
   return requireDb().collection('users').doc(uid).collection('discoveryRuns');
 }
 
+function requestsCollection(uid) {
+  return requireDb().collection('users').doc(uid).collection('discoveryRequests');
+}
+
+function requireUid(userOrUid) {
+  const uid = typeof userOrUid === 'string' ? userOrUid : userOrUid?.uid;
+  if (!uid) throw new Error('Sign in before queuing discovery.');
+  return uid;
+}
+
 function normalizeSettings(data = {}) {
   return {
     ...DEFAULT_DISCOVERY_SETTINGS,
@@ -94,24 +123,31 @@ function normalizeSettings(data = {}) {
 }
 
 export function isDiscoveryBackendConfigured() {
-  return Boolean(discoveryRunEndpoint && discoveryImportEndpoint);
+  return Boolean(db);
 }
 
 export function hasVerifiedDiscoveryScan(stats = null, sources = []) {
   const enabledSourceCount = (sources || []).filter((source) => source.enabled !== false && !source.paused).length;
   const successful = Boolean(stats?.lastSuccessfulScanAt || stats?.verifiedBackendAt || stats?.lastSuccessfulRunId);
   const checkedSomething = Number(stats?.sourcesChecked || 0) > 0 || Number(stats?.recordsChecked || 0) > 0;
-  return isDiscoveryBackendConfigured() && enabledSourceCount > 0 && successful && checkedSomething;
+  return enabledSourceCount > 0 && successful && checkedSomething;
 }
 
-export function discoveryAutomaticStatus(settings = DEFAULT_DISCOVERY_SETTINGS, stats = null, sources = []) {
-  if (!hasVerifiedDiscoveryScan(stats, sources)) return 'Not configured';
+export function discoveryAutomaticStatus(settings = DEFAULT_DISCOVERY_SETTINGS) {
   if (settings.pauseAllScanning || !settings.automaticDiscoveryEnabled) return 'Paused';
-  return 'Enabled';
+  return 'GitHub Actions scheduled';
 }
 
 export function isActiveDiscoveryRun(run = null) {
-  return ['queued', 'running', 'checking-sources', 'extracting-records', 'detecting-dates', 'checking-duplicates', 'saving-results'].includes(run?.status);
+  return ['queued', 'processing', 'running', 'checking-sources', 'extracting-records', 'detecting-dates', 'checking-duplicates', 'saving-results'].includes(run?.status);
+}
+
+export function requestStatusLabel(status) {
+  return DISCOVERY_REQUEST_STATUS_LABELS[status] || DISCOVERY_REQUEST_STATUS_LABELS.queued;
+}
+
+export function requestTypeLabel(type) {
+  return DISCOVERY_REQUEST_TYPE_LABELS[type] || 'Discovery request';
 }
 
 export function subscribeDiscoverySettings(uid, onData, onError) {
@@ -182,46 +218,75 @@ export function subscribeDiscoveryStats(uid, onData, onError) {
   );
 }
 
-async function authHeaders(user = auth?.currentUser) {
-  if (!user?.getIdToken) throw new Error('Sign in before using backend discovery.');
-  const token = await user.getIdToken();
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-  };
+export function subscribeDiscoveryRequests(uid, onData, onError, limit = 20) {
+  return requestsCollection(uid)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .onSnapshot(
+      (snapshot) => onData(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))),
+      onError,
+    );
 }
 
-async function postDiscovery(endpoint, body, user, options = {}) {
-  if (!endpoint) throw new Error('Automatic discovery is not configured. Deploy the Firebase Functions and set the discovery endpoint.');
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: await authHeaders(user),
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.ok) throw new Error(payload?.error || `Discovery request failed with HTTP ${response.status}.`);
-  return payload;
+export async function queueDiscoveryRequest(userOrUid, type, payload = {}) {
+  const uid = requireUid(userOrUid);
+  const ref = requestsCollection(uid).doc();
+  const now = firebaseNamespace.firestore.FieldValue.serverTimestamp();
+  await withFirestoreWriteTimeout(ref.set({
+    ...payload,
+    type,
+    status: 'queued',
+    statusLabel: DISCOVERY_REQUEST_STATUS_LABELS.queued,
+    requestedBy: uid,
+    requestedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    workflowUrl: RESEARCH_DISCOVERY_WORKFLOW_URL,
+  }));
+  return { ok: true, requestId: ref.id, status: 'queued', workflowUrl: RESEARCH_DISCOVERY_WORKFLOW_URL, message: DISCOVERY_QUEUE_MESSAGE };
 }
 
 export async function startDiscoveryRun(user, mode = 'quick') {
-  return postDiscovery(discoveryRunEndpoint, { action: 'start-run', mode }, user);
+  const uid = requireUid(user);
+  if (mode === 'full') {
+    return { ok: true, workflowUrl: RESEARCH_DISCOVERY_WORKFLOW_URL, message: GITHUB_ACTIONS_DISCOVERY_MESSAGE };
+  }
+  return queueDiscoveryRequest(uid, 'quick-refresh', {
+    mode: 'quick',
+    runType: 'manual-quick-refresh',
+    title: 'Quick Refresh',
+  });
 }
 
-export async function testDiscoverySource(user, source) {
-  return postDiscovery(discoveryRunEndpoint, { action: 'test-source', source }, user);
+export async function testDiscoverySource() {
+  throw new Error('Instant source testing is disabled to keep the project free. Save the source and run the Research Discovery workflow.');
 }
 
 export async function scanDiscoverySource(user, sourceId) {
-  return postDiscovery(discoveryRunEndpoint, { action: 'scan-source', sourceId }, user);
+  if (!sourceId) throw new Error('Source ID is required.');
+  return queueDiscoveryRequest(user, 'single-source', {
+    mode: 'single-source',
+    sourceId,
+    runType: 'manual-source-scan',
+    title: 'Scan One Source',
+  });
 }
 
-export async function cancelDiscoveryRun(user, runId) {
-  return postDiscovery(discoveryRunEndpoint, { action: 'cancel-run', runId }, user);
+export async function cancelDiscoveryRun() {
+  throw new Error('Queued discovery requests are processed by GitHub Actions. Open the workflow to review or rerun discovery.');
 }
 
-export async function importDiscoveryUrl(user, url, extra = {}, options = {}) {
-  return postDiscovery(discoveryImportEndpoint, { url, ...extra }, user, options);
+export async function importDiscoveryUrl(user, url, extra = {}) {
+  const sourceUrl = String(url || '').trim();
+  if (!sourceUrl) throw new Error('Enter a URL before queuing discovery.');
+  return queueDiscoveryRequest(user, 'single-link', {
+    ...extra,
+    sourceUrl,
+    url: sourceUrl,
+    mode: 'single-link',
+    runType: 'manual-link-scrape',
+    title: sourceUrl,
+  });
 }
 
 export function originLabel(origin) {
@@ -302,4 +367,8 @@ export function nextScheduledScan(settings = DEFAULT_DISCOVERY_SETTINGS, fromDat
     }
   }
   return 'Not scheduled';
+}
+
+export function fixedDiscoveryScheduleLabel() {
+  return FIXED_DISCOVERY_SCHEDULE_LABEL;
 }
