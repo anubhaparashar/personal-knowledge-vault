@@ -228,6 +228,11 @@ export default function SettingsPage({ pages, pdfs = [] }) {
           {reanalysisProgress ? <p className="status-message">{reanalysisProgress}</p> : null}
         </article>
 
+        <article className="settings-card">
+          <h2>Review entry origins</h2>
+          <p>Use All Notes filters and bulk actions to correct entries that were imported, shared, saved from discovery, or marked as discoveries by mistake.</p>
+          <a className="button secondary" href="#/notes">Review entry origins</a>
+        </article>
         <DiscoverySettingsPanel />
 
         <article className="settings-card warning-card">

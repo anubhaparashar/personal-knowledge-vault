@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
 import ResearchCalendar from '../components/ResearchCalendar';
 import { useAuth } from '../context/AuthContext';
 import { savePage } from '../services/pages';
 import { applyDateToPage, removeDateFromPage } from '../utils/researchDates';
+import { isArchivedPage } from '../utils/pageModel';
 
 export default function ResearchCalendarPage({ pages, loading, error }) {
   const { user } = useAuth();
   const [message, setMessage] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const visiblePages = useMemo(() => (showArchived ? pages : pages.filter((page) => !isArchivedPage(page))), [pages, showArchived]);
 
   async function saveDate(input) {
     const page = pages.find((item) => item.id === input.pageId);
@@ -34,9 +37,10 @@ export default function ResearchCalendarPage({ pages, loading, error }) {
 
   return (
     <AppShell title="Research Calendar">
+      <div className="calendar-toolbar"><label className="switch-field"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} /><span>Show archived</span></label></div>
       {message ? <p className="status-message calendar-status-message">{message}</p> : null}
       <ResearchCalendar
-        pages={pages}
+        pages={visiblePages}
         loading={loading}
         error={error}
         onSaveDate={saveDate}

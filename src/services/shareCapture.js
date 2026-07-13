@@ -129,7 +129,7 @@ export function normalizeSharePayload(input = {}) {
     destinationPageId: input.destinationPageId || null,
     duplicateOf: input.duplicateOf || null,
     duplicateTitle: input.duplicateTitle || '',
-    origin: input.origin || 'system-share',
+    origin: input.origin || 'shared-inbox',
     attachmentIndicator: input.attachmentIndicator || (files.length ? `${files.length} shared file(s)` : ''),
     files,
     synced: Boolean(input.synced),
@@ -152,7 +152,7 @@ export function parseShareLaunch(search = window.location.search) {
     rawText: params.get('text') || '',
     rawUrl: params.get('url') || '',
     suggestedCategory: params.get('category') || null,
-    origin: params.get('origin') || 'system-share',
+    origin: params.get('origin') || 'shared-inbox',
   });
 }
 

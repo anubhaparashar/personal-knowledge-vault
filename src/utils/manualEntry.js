@@ -244,7 +244,7 @@ export function buildManualEntryPreload(entryTypeId, overrides = {}) {
     summary: '',
     html: '<p></p>',
     secure: false,
-    origin: 'manually-added',
+    origin: 'manual',
     entryTypeId: entryType.id,
     visibleFields: entryType.visibleFields || [],
     suggestedDateTypes: entryType.dateTypes || [],
@@ -260,5 +260,5 @@ export function openManualEntry(entryTypeId, overrides = {}) {
 }
 
 export function openUploadDocumentEntry() {
-  openManualEntry('general-note', { focusUpload: true, title: '', tagsText: 'Uploaded document' });
+  openManualEntry('general-note', { focusUpload: true, title: '', tagsText: 'Uploaded document', origin: 'imported-file' });
 }

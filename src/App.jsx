@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { savePage, subscribePages } from './services/pages';
+import { migratePageOriginFields, savePage, subscribePages } from './services/pages';
 import { parseShareLaunch, putLocalCapture, replaceShareLaunchUrl } from './services/shareCapture';
 import { subscribeSharedInbox, syncPendingLocalCaptures } from './services/sharedInbox';
 import { subscribePdfs } from './services/pdfs';
@@ -14,6 +14,7 @@ import PdfsPage from './pages/PdfsPage';
 import ResearchCalendarPage from './pages/ResearchCalendarPage';
 import ShareCapturePage from './pages/ShareCapturePage';
 import SharedInboxPage from './pages/SharedInboxPage';
+import PublicSharePage from './pages/PublicSharePage';
 
 function currentHashRoute() {
   return window.location.hash || '#/';
@@ -47,11 +48,12 @@ function AuthenticatedApp() {
   const [pdfs, setPdfs] = useState([]);
   const [pdfsLoaded, setPdfsLoaded] = useState(false);
   const [pdfsError, setPdfsError] = useState('');
-    const [sharedInbox, setSharedInbox] = useState([]);
+  const [sharedInbox, setSharedInbox] = useState([]);
   const [sharedInboxLoaded, setSharedInboxLoaded] = useState(false);
   const [sharedInboxError, setSharedInboxError] = useState('');
   const [shareLaunchChecked, setShareLaunchChecked] = useState(false);
   const dateMigrationStartedRef = useRef(false);
+  const originMigrationStartedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +138,7 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     dateMigrationStartedRef.current = false;
+    originMigrationStartedRef.current = false;
   }, [user?.uid]);
 
   useEffect(() => {
@@ -167,9 +170,38 @@ function AuthenticatedApp() {
     };
   }, [pages, pagesLoaded, user]);
 
+
+  useEffect(() => {
+    if (!user || !pagesLoaded || originMigrationStartedRef.current) return;
+    const migrationKey = `kv-origin-migration:${user.uid}:v1`;
+    if (window.localStorage.getItem(migrationKey) === 'complete') return;
+
+    originMigrationStartedRef.current = true;
+    let cancelled = false;
+
+    async function runOriginMigration() {
+      try {
+        for (const page of pages) {
+          if (cancelled) return;
+          if (!page.__needsOriginMigration) continue;
+          await migratePageOriginFields(user.uid, page);
+        }
+        if (!cancelled) window.localStorage.setItem(migrationKey, 'complete');
+      } catch (error) {
+        originMigrationStartedRef.current = false;
+        console.warn('Automatic origin migration failed', error);
+      }
+    }
+
+    window.setTimeout(runOriginMigration, 0);
+    return () => {
+      cancelled = true;
+    };
+  }, [pages, pagesLoaded, user]);
   if (!shareLaunchChecked) return <div className="app-loading">Capturing shared item...</div>;
 
   const [section = '', id] = route;
+  if (section === 'share' && id) return <PublicSharePage shareId={id} />;
   if (section === 'share-capture' && id) return <ShareCapturePage captureId={id} pages={pages} sharedInbox={sharedInbox} />;
   if (loading) return <div className="app-loading">Opening your private library...</div>;
   if (!user) return <LoginPage />;

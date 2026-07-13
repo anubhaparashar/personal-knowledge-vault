@@ -67,7 +67,7 @@ export function serializeSharedCapture(capture = {}, { isNew = false } = {}) {
     destinationPageId: capture.destinationPageId || null,
     duplicateOf: capture.duplicateOf || null,
     duplicateTitle: capture.duplicateTitle || '',
-    origin: capture.origin || 'system-share',
+    origin: capture.origin || 'shared-inbox',
     attachmentIndicator: capture.attachmentIndicator || '',
     attachments: attachmentMetadata(capture.files || capture.attachments),
     archived: Boolean(capture.archived),

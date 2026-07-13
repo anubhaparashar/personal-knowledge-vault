@@ -1,4 +1,4 @@
-﻿import { db, firebaseNamespace } from '../firebase';
+import { db, firebaseNamespace } from '../firebase';
 import { withFirestoreWriteTimeout } from './pages';
 
 export const RESEARCH_DISCOVERY_WORKFLOW_URL = 'https://github.com/anubhaparashar/personal-knowledge-vault/actions/workflows/research-discovery.yml';
@@ -74,11 +74,19 @@ export const SOURCE_TYPES = [
 ];
 
 export const ORIGIN_LABELS = {
+  manual: 'Manual',
+  pasted: 'Pasted',
+  'imported-link': 'Imported Link',
+  'imported-file': 'Uploaded File',
+  'shared-inbox': 'Shared from App',
   'auto-discovered': 'Auto-discovered',
-  'manually-added': 'Manually added',
-  'imported-from-url': 'Imported from URL',
-  'imported-from-file': 'Imported from file',
   'scholarly-api': 'Scholarly API',
+  'system-generated': 'System Generated',
+  'saved-discovery': 'Saved Discovery',
+  'manually-added': 'Manual',
+  'imported-from-url': 'Imported Link',
+  'imported-from-file': 'Uploaded File',
+  'system-share': 'Shared from App',
 };
 
 function requireDb() {
@@ -289,14 +297,26 @@ export async function importDiscoveryUrl(user, url, extra = {}) {
   });
 }
 
+function normalizedOrigin(origin = 'manual') {
+  return ({
+    'manually-added': 'manual',
+    'imported-from-url': 'imported-link',
+    'imported-from-file': 'imported-file',
+    'system-share': 'shared-inbox',
+  })[origin] || origin || 'manual';
+}
+
 export function originLabel(origin) {
-  return ORIGIN_LABELS[origin] || ORIGIN_LABELS['manually-added'];
+  const normalized = normalizedOrigin(origin);
+  return ORIGIN_LABELS[normalized] || ORIGIN_LABELS.manual;
 }
 
 export function originTone(origin) {
-  if (origin === 'auto-discovered' || origin === 'scholarly-api') return 'upcoming';
-  if (origin === 'imported-from-url' || origin === 'imported-from-file') return 'neutral';
-  return 'pin';
+  const normalized = normalizedOrigin(origin);
+  if (normalized === 'auto-discovered' || normalized === 'scholarly-api') return 'upcoming';
+  if (normalized === 'saved-discovery') return 'completed';
+  if (normalized === 'manual') return 'pin';
+  return 'neutral';
 }
 
 function pad(value) {

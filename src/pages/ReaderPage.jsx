@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
+import ShareEntryDialog from '../components/ShareEntryDialog';
 import BookReader from '../components/BookReader';
 import DriveAttachmentList from '../components/DriveAttachmentList';
 import PdfViewer from '../components/PdfViewer';
 import UnlockPanel from '../components/UnlockPanel';
+import { useAuth } from '../context/AuthContext';
 import { decryptObject } from '../utils/crypto';
 import {
   formatDate,
@@ -12,10 +14,12 @@ import {
 } from '../utils/content';
 import { downloadPageAsHtml } from '../utils/download';
 import { downloadAttachmentBlob } from '../services/attachments';
+import { archivePage, savePage, unarchivePage } from '../services/pages';
 import { daysUntil, deadlineStatus } from '../utils/intelligence';
 import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { formatDetectedDate } from '../utils/dates';
-import { formatDiscoveryTimestamp, originLabel, originTone } from '../services/discovery';
+import { formatDiscoveryTimestamp } from '../services/discovery';
+import { isArchivedPage, isDiscoveryRecord, isMyEntry, normalizePage, originLabel, originTone, savedDiscoveryPatch } from '../utils/pageModel';
 
 function deadlineLabel(deadline) {
   const status = deadlineStatus(deadline);
@@ -37,12 +41,15 @@ function dateSourceLabel(deadline) {
 }
 
 export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
+  const { user } = useAuth();
   const page = pages.find((item) => item.id === pageId);
+  const normalizedPage = page ? normalizePage(page) : null;
   const [decrypted, setDecrypted] = useState(null);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('kv-reader-mode') || 'scroll');
   const [preview, setPreview] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
-  const content = page?.secure ? decrypted : page;
+  const content = page?.secure ? decrypted : normalizedPage;
   const renderedHtml = useMemo(
     () => (content ? linkifyWikiHtml(content.html || '', pages) : ''),
     [content, pages],
@@ -76,6 +83,40 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   async function unlock(passphrase) {
     const result = await decryptObject(page.encryption, passphrase);
     setDecrypted(result);
+  }
+  async function toggleArchive() {
+    if (!user?.uid || !normalizedPage) return;
+    try {
+      if (isArchivedPage(normalizedPage)) await unarchivePage(user.uid, normalizedPage.id);
+      else await archivePage(user.uid, normalizedPage.id, 'Archived from reader');
+    } catch (error) {
+      window.alert(error.message || 'Could not update archive status.');
+    }
+  }
+
+  async function saveDiscoveryToMyEntries() {
+    if (!user?.uid || !normalizedPage) return;
+    try {
+      await savePage(user.uid, normalizedPage.id, savedDiscoveryPatch(normalizedPage), false);
+      window.alert('Saved to My Entries.');
+    } catch (error) {
+      window.alert(error.message || 'Could not save discovery.');
+    }
+  }
+
+  function startApplication() {
+    if (!normalizedPage) return;
+    localStorage.setItem('kv-editor-preload', JSON.stringify({
+      title: `Application - ${normalizedPage.title || 'Opportunity'}`,
+      category: 'Applications/Application Documents',
+      tagsText: ['Application', ...(normalizedPage.tags || [])].join(', '),
+      sourceUrl: normalizedPage.sourceUrl || '',
+      summary: `Application workspace for ${normalizedPage.title || 'this opportunity'}.`,
+      html: `<p>Application workspace for <a href="#/read/${normalizedPage.id}">${normalizedPage.title || 'this opportunity'}</a>.</p>`,
+      origin: 'manual',
+      opportunityDetails: { relatedOpportunityId: normalizedPage.id, applicationUrl: normalizedPage.sourceUrl || '' },
+    }));
+    window.location.hash = '#/edit/new';
   }
 
   async function openPdfInWebsite(item) {
@@ -154,7 +195,9 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           <div>
             <div className="tag-row">
               <span>{content.category || 'Uncategorised'}</span>
-              <span className={`origin-badge badge-${originTone(content.origin || page.origin || page.createdOrigin || 'manually-added')}`}>{originLabel(content.origin || page.origin || page.createdOrigin || 'manually-added')}</span>
+              <span className={`origin-badge badge-${originTone(normalizedPage?.origin || content.origin)}`}>{originLabel(normalizedPage?.origin || content.origin)}</span>
+              {isArchivedPage(normalizedPage) ? <span>Archived</span> : null}
+              {normalizedPage?.visibility === 'share-link' ? <span>Shared</span> : null}
               {page.secure ? <span>Decrypted for this session</span> : null}
             </div>
             <h2>{content.title}</h2>
@@ -162,7 +205,11 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             <small>Updated {formatDate(page.updatedAt)}</small>
           </div>
           <div className="reader-actions">
-            <a className="button secondary" href={`#/edit/${page.id}`}>Edit</a>
+            {isMyEntry(normalizedPage) ? <a className="button secondary" href={`#/edit/${page.id}`}>Edit</a> : null}
+            {isMyEntry(normalizedPage) ? <button className="button secondary" type="button" onClick={() => setShareOpen(true)}>Share</button> : null}
+            {isDiscoveryRecord(normalizedPage) ? <button className="button secondary" type="button" onClick={saveDiscoveryToMyEntries}>Save to My Entries</button> : null}
+            {isDiscoveryRecord(normalizedPage) ? <button className="button secondary" type="button" onClick={startApplication}>Start Application</button> : null}
+            <button className="button secondary" type="button" onClick={toggleArchive}>{isArchivedPage(normalizedPage) ? 'Restore' : 'Archive'}</button>
             <button className="button secondary" onClick={() => downloadPageAsHtml(page, content)}>Download HTML</button>
             <button className="button secondary" onClick={() => window.print()}>Print / Save PDF</button>
             {page.secure ? <button className="button secondary" onClick={() => setDecrypted(null)}>Lock now</button> : null}
@@ -175,7 +222,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
         </section>
 
         <section className="record-origin-panel reader-section">
-          {(content.origin || page.origin) === 'auto-discovered' || (content.origin || page.origin) === 'scholarly-api' ? (
+          {isDiscoveryRecord(normalizedPage) || normalizedPage?.origin === 'saved-discovery' ? (
             <dl>
               <div><dt>Source</dt><dd>{content.discovery?.sourceName || content.sourceDomain || content.sourceUrl || 'Official source'}</dd></div>
               <div><dt>First discovered</dt><dd>{formatDiscoveryTimestamp(content.discovery?.firstDiscoveredAt)}</dd></div>
@@ -236,6 +283,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           ) : <p className="muted">No backlinks yet. Link to this page using <code>[[{content.title}]]</code>.</p>}
         </section>
       </article>
+      <ShareEntryDialog page={normalizedPage} open={shareOpen} onClose={() => setShareOpen(false)} />
       {preview ? (
         <div className="attachment-preview-modal" role="dialog" aria-modal="true" aria-label={preview.title}>
           <div className="attachment-preview-surface">

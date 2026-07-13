@@ -18,11 +18,13 @@ import {
 import { extractContentFromFile } from '../services/fileExtraction';
 import {
   approximateFirestorePayloadBytes,
+  archivePage,
   createPageId,
   getFirebaseErrorCode,
   getFirestoreSaveErrorMessage,
   removePage,
   savePage,
+  unarchivePage,
 } from '../services/pages';
 import { importUrlContent, validateImportUrl } from '../services/urlImport';
 import { canUseGooglePicker, disconnectDrive, getGooglePickerUnavailableMessage, pickDriveFiles, requestDriveAccess, resolveDriveFolder } from '../services/googleDrive';
@@ -424,7 +426,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [sourceImportPreview, setSourceImportPreview] = useState(null);
   const [detectedSourceUrls, setDetectedSourceUrls] = useState([]);
   const [opportunityDetails, setOpportunityDetails] = useState(EMPTY_OPPORTUNITY_DETAILS);
-  const [recordOrigin, setRecordOrigin] = useState('manually-added');
+  const [recordOrigin, setRecordOrigin] = useState('manual');
   const [importantDates, setImportantDates] = useState([]);
   const [autoCategory, setAutoCategory] = useState({ category: '', confidence: 0 });
   const [categoryManuallyEdited, setCategoryManuallyEdited] = useState(false);
@@ -513,7 +515,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = preload?.sourceUrl || '';
       setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(preload?.opportunityDetails || {}) });
-      setRecordOrigin(preload?.origin || 'manually-added');
+      setRecordOrigin(preload?.origin || 'manual');
       setImportantDates(preload?.importantDates || []);
       setSecure(Boolean(preload?.secure));
       setUnlocked(true);
@@ -553,7 +555,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = '';
       setOpportunityDetails(EMPTY_OPPORTUNITY_DETAILS);
-      setRecordOrigin(existing.origin || existing.createdOrigin || 'manually-added');
+      setRecordOrigin(existing.origin || existing.createdOrigin || 'manual');
       setImportantDates([]);
       setAttachments([]);
       setInlineFiles([]);
@@ -573,7 +575,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = existing.sourceUrl || existing.sourceMetadata?.originalUrl || '';
       setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(existing.opportunityDetails || {}) });
-      setRecordOrigin(existing.origin || existing.createdOrigin || 'manually-added');
+      setRecordOrigin(existing.origin || existing.createdOrigin || 'manual');
       const migratedDates = migrateLegacyPageDates(existing);
       setImportantDates(migratedDates.importantDates || existing.importantDates || []);
       setLastDetectedDates((migratedDates.importantDates || []).filter((item) => item.detectedAutomatically || item.source === 'automatic').slice(0, 4));
@@ -1463,7 +1465,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       const preview = buildSourceImportPreview(imported, metadata, detectedDates, nextSourceMetadata, conflicts);
 
       setSourceMetadata((current) => mergedSourceMetadata(current, nextSourceMetadata));
-      setRecordOrigin((current) => current === 'manually-added' && options.detected ? 'manually-added' : current || 'manually-added');
+      setRecordOrigin((current) => (options.manual ? 'imported-link' : (current === 'manual' && options.detected ? 'manual' : current || 'manual')));
       setAutoCategory({ category: importedCategory, confidence: imported.extractionConfidence || metadata.categoryConfidence });
       setLastDetectedDates(detectedDates);
       setImportantDates((current) => mergeImportantDates(current, detectedDates, pageId));
@@ -1592,7 +1594,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setDetectedSourceUrls([]);
     autoEnrichedSourceRef.current = draftPrompt.form?.sourceUrl || draftPrompt.sourceMetadata?.originalUrl || '';
     setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(draftPrompt.opportunityDetails || {}) });
-    setRecordOrigin(draftPrompt.recordOrigin || 'manually-added');
+    setRecordOrigin(draftPrompt.recordOrigin || 'manual');
     setCategoryManuallyEdited(Boolean(draftPrompt.categoryManuallyEdited));
     setUploadRows([]);
     setUnlocked(true);
@@ -1792,7 +1794,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
           sourceMetadata,
           opportunityDetails,
-          origin: recordOrigin || 'manually-added',
+          origin: recordOrigin || 'manual',
         }, passphrase);
 
         data = {
@@ -1810,8 +1812,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           sourceMetadata: null,
           attachments: [],
           inlineFiles: [],
-          origin: recordOrigin || 'manually-added',
-          createdOrigin: recordOrigin || 'manually-added',
+          origin: recordOrigin || 'manual',
+          createdOrigin: recordOrigin || 'manual',
           opportunityDetails: {},
           encryption,
         };
@@ -1842,8 +1844,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           attachments,
           inlineFiles,
           opportunityDetails,
-          origin: recordOrigin || 'manually-added',
-          createdOrigin: recordOrigin || 'manually-added',
+          origin: recordOrigin || 'manual',
+          createdOrigin: recordOrigin || 'manual',
         };
       }
 
@@ -1877,7 +1879,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify({
             category: selectedCategory,
             tagsText: tags.join(', '),
-            origin: 'manually-added',
+            origin: 'manual',
             opportunityDetails: {},
           }));
           window.location.hash = `#/edit/new-${Date.now()}`;
@@ -1891,7 +1893,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             sourceUrl: form.sourceUrl.trim(),
             summary: `Application workspace for ${form.title.trim()}.`,
             html: `<p>Application workspace for <a href="#/read/${pageId}">${form.title.trim()}</a>.</p>`,
-            origin: 'manually-added',
+            origin: 'manual',
             opportunityDetails: { relatedOpportunityId: pageId, institution: opportunityDetails.institution || '' },
           }));
           window.location.hash = `#/edit/new-${Date.now()}`;
@@ -1918,6 +1920,27 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }
   }
 
+  async function toggleArchiveCurrent() {
+    if (isNew || !existing) return;
+    setSaving(true);
+    setSaveStatus('Saving...');
+    try {
+      if (existing.isArchived) {
+        await unarchivePage(user.uid, existing.id);
+        setMessage('Page restored from archives.');
+      } else {
+        await archivePage(user.uid, existing.id, 'Archived from editor');
+        setMessage('Page archived.');
+        window.location.hash = '#/archives';
+      }
+      setSaveStatus('Saved');
+    } catch (error) {
+      setMessage(error.message || 'Could not update archive status.');
+      setSaveStatus('Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
   async function deleteCurrent() {
     if (isNew || !existing) return;
     if (!window.confirm('Delete this page permanently?')) return;
@@ -2618,6 +2641,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             <button type="button" className="button secondary full" disabled={saving} onClick={() => { if (!hasLocalChanges || window.confirm('Discard unsaved changes?')) window.location.hash = '#/'; }}>Cancel</button>
             {message ? <div className="save-error-panel" role="alert">{message}</div> : null}
           </div>
+          {!isNew ? <button type="button" className="button secondary full" disabled={saving} onClick={toggleArchiveCurrent}>{existing?.isArchived ? 'Unarchive page' : 'Archive page'}</button> : null}
           {!isNew ? <button type="button" className="button danger full" disabled={saving} onClick={deleteCurrent}>Delete page</button> : null}
         </aside>
       </form>

@@ -1,4 +1,4 @@
-﻿import crypto from 'node:crypto';
+import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import admin from 'firebase-admin';
@@ -865,6 +865,14 @@ function pagePayloadFromRecord(record, source, existing = null) {
     inlineFiles: existing?.inlineFiles || [],
     origin,
     createdOrigin: origin,
+    createdByUser: false,
+    isArchived: Boolean(existing?.isArchived),
+    archivedAt: existing?.archivedAt || null,
+    archivedReason: existing?.archivedReason || null,
+    visibility: existing?.visibility === 'share-link' ? 'share-link' : 'private',
+    shareId: existing?.shareId || null,
+    shareCreatedAt: existing?.shareCreatedAt || null,
+    shareExpiresAt: existing?.shareExpiresAt || null,
     discoveryState: record.relevanceScore >= 0.72 ? 'active' : 'inbox',
     discovery: {
       ...(existing?.discovery || {}),
@@ -925,7 +933,7 @@ async function listSources(uid, sourceId = '') {
 }
 async function refreshExisting(uid, runRef, warnings) {
   await updateRun(runRef, { status: 'running', step: 'loading-active-records', currentStage: QUICK_STAGES.loading, currentSource: null });
-  const snapshot = await userRef(uid).collection('pages').where('origin', 'in', ['auto-discovered', 'scholarly-api', 'imported-from-url']).limit(80).get();
+  const snapshot = await userRef(uid).collection('pages').where('origin', 'in', ['auto-discovered', 'scholarly-api']).limit(80).get();
   let updatedRecords = 0;
   let deadlineChanges = 0;
   let closedRecords = 0;

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extractImportantDates, formatDetectedDate, selectNextImportantDate } from '../src/utils/dates.js';
 import { detectExternalUrls } from '../src/utils/sourceLinks.js';
+import { isArchivedPage, isDiaryEntry, isDiscoveryRecord, isMyEntry, normalizePage, pageMatchesSection, savedDiscoveryPatch } from '../src/utils/pageModel.js';
 import { generateSmartMetadata } from '../src/utils/intelligence.js';
 import {
   buildLinkedInImportResult,
@@ -88,9 +89,9 @@ run('Record origins and queue-based discovery state are represented in frontend'
   const discovery = read('src/services/discovery.js');
   const dashboard = read('src/pages/DashboardPage.jsx');
   assert.match(discovery, /auto-discovered/);
-  assert.match(discovery, /manually-added/);
-  assert.match(discovery, /imported-from-url/);
-  assert.match(discovery, /imported-from-file/);
+  assert.match(discovery, /manual/);
+  assert.match(discovery, /imported-link/);
+  assert.match(discovery, /imported-file/);
   assert.match(discovery, /scholarly-api/);
   assert.match(discovery, /discoveryRequests/);
   assert.match(dashboard, /GitHub Actions scheduled/);
@@ -103,6 +104,47 @@ run('Record origins and queue-based discovery state are represented in frontend'
   assert.match(dashboard, /Scan One Source/);
   assert.match(dashboard, /const \[discoveryRequests, setDiscoveryRequests\] = useState\(\[\]\)/);
   assert.match(dashboard, /Array\.isArray\(discoveryRequests\)/);
+});
+
+run('Origin model separates diary, my entries, discoveries and archives', () => {
+  const diary = normalizePage({ id: 'diary-1', title: 'Diary', category: 'Personal/Diary', origin: 'manual' });
+  const scholarship = normalizePage({ id: 'disc-1', title: 'Scholarship', category: 'Research Opportunities/Scholarships', origin: 'auto-discovered', createdByUser: false, discoveryRunId: 'run-1' });
+  const saved = normalizePage({ ...scholarship, ...savedDiscoveryPatch(scholarship) });
+  const archivedManual = normalizePage({ id: 'note-1', title: 'Manual note', origin: 'manual', createdByUser: true, isArchived: true });
+
+  assert.equal(isDiaryEntry(diary), true);
+  assert.equal(pageMatchesSection(diary, 'diary'), true);
+  assert.equal(pageMatchesSection(scholarship, 'diary'), false);
+  assert.equal(isDiscoveryRecord(scholarship), true);
+  assert.equal(pageMatchesSection(scholarship, 'discoveries'), true);
+  assert.equal(pageMatchesSection(scholarship, 'my-entries'), false);
+  assert.equal(isMyEntry(saved), true);
+  assert.equal(pageMatchesSection(saved, 'my-entries'), true);
+  assert.equal(isArchivedPage(archivedManual), true);
+  assert.equal(pageMatchesSection(archivedManual, 'my-entries'), false);
+  assert.equal(pageMatchesSection(archivedManual, 'archives'), true);
+  assert.equal(pageMatchesSection(scholarship, 'notes', { allNotesView: 'my-entries' }), false);
+  assert.equal(pageMatchesSection(scholarship, 'notes', { allNotesView: 'everything' }), true);
+});
+
+run('Archive and public share surfaces are wired without exposing private pages', () => {
+  const dashboard = read('src/pages/DashboardPage.jsx');
+  const reader = read('src/pages/ReaderPage.jsx');
+  const publicShares = read('src/services/publicShares.js');
+  const rules = read('firestore.rules');
+
+  assert.match(dashboard, /Save to My Entries/);
+  assert.match(dashboard, /Archive selected/);
+  assert.match(dashboard, /Mark as Discovery/);
+  assert.match(dashboard, /ShareEntryDialog/);
+  assert.match(reader, /Save to My Entries/);
+  assert.match(reader, /Archive/);
+  assert.match(publicShares, /publicShares/);
+  assert.match(publicShares, /Encrypted notes cannot be publicly shared/);
+  assert.match(rules, /match \/publicShares\/\{shareId\}/);
+  assert.match(rules, /allow get:/);
+  assert.match(rules, /allow list: if false/);
+  assert.doesNotMatch(rules, /allow read: if true/);
 });
 
 
@@ -209,7 +251,7 @@ run('Pasted ACM TOMM LinkedIn shortlink is detected and classified for enrichmen
   assert.deepEqual(urls, ['https://lnkd.in/er3Qsers']);
   const metadata = generateSmartMetadata({ pageId: 'regression-acm-tomm', text: ACM_TOMM_SPECIAL_ISSUE_PASTE, sourceUrl: urls[0] });
   assert.equal(metadata.category, 'Publishing/Special Issues');
-  assert.equal(metadata.suggestedTitle, 'Towards Responsible and Explainable Multi-Modal Fusion — ACM TOMM Special Issue');
+  assert.equal(metadata.suggestedTitle, 'Towards Responsible and Explainable Multi-Modal Fusion \u2014 ACM TOMM Special Issue');
   ['ACM TOMM', 'Special Issue', 'Multimodal Fusion', 'Responsible AI', 'Explainable AI', 'Submission Deadline'].forEach((tag) => {
     assert.ok(metadata.tags.includes(tag), `Missing tag: ${tag}`);
   });

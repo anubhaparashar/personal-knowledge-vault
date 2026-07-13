@@ -463,7 +463,7 @@ export function DateDetailsPanel({ date, events, onClose, onOpenEntry, onOpenEve
               localStorage.setItem('kv-editor-preload', JSON.stringify({
                 title: `Note for ${formatDateShort(date)}`,
                 category: 'Personal Knowledge/General Notes',
-                origin: 'manually-added',
+                origin: 'manual',
                 importantDates: [{ id: crypto.randomUUID(), type: 'Personal reminder', title: 'Personal reminder', date, source: 'manual', confirmed: true, manuallyEdited: true }],
               }));
               window.location.hash = `#/edit/new-${Date.now()}`;

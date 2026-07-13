@@ -19,6 +19,13 @@ service cloud.firestore {
       }
     }
 
+    match /publicShares/{shareId} {
+      allow get: if resource.data.visibility == "share-link"
+        && resource.data.active == true
+        && (!resource.data.keys().hasAny(["shareExpiresAt"]) || resource.data.shareExpiresAt == null || resource.data.shareExpiresAt > request.time);
+      allow list: if false;
+      allow create, update, delete: if request.auth != null && request.auth.uid == "REPLACE_WITH_YOUR_UID";
+    }
     match /{document=**} {
       allow read, write: if false;
     }

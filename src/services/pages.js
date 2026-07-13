@@ -1,4 +1,12 @@
 import { db, firebaseNamespace } from '../firebase';
+import {
+  archivePatch,
+  buildOriginMigrationPatch,
+  normalizePage,
+  normalizePageForSave,
+  normalizePagePatch,
+  unarchivePatch,
+} from '../utils/pageModel';
 
 export const FIRESTORE_WRITE_TIMEOUT_MS = 15_000;
 export const FIRESTORE_SAVE_TIMEOUT_MESSAGE = 'Saving timed out. Check that Firestore is created, your security rules allow this account, and your internet connection is working.';
@@ -17,9 +25,14 @@ function pagesCollection(uid) {
   return db.collection('users').doc(uid).collection('pages');
 }
 
+function hasFullPageShape(data = {}) {
+  return ['title', 'category', 'html', 'summary', 'plainText', 'tags', 'sourceUrl', 'origin'].some((field) => Object.prototype.hasOwnProperty.call(data, field));
+}
+
 function buildPagePayload(data, isNew = false) {
+  const base = isNew || hasFullPageShape(data) ? normalizePageForSave(data, { isNew }) : normalizePagePatch(data);
   const payload = {
-    ...data,
+    ...base,
     updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
   };
   if (isNew) payload.createdAt = firebaseNamespace.firestore.FieldValue.serverTimestamp();
@@ -28,8 +41,9 @@ function buildPagePayload(data, isNew = false) {
 
 function buildSizePayload(data, isNew = false) {
   const serverTimestamp = { __type: 'serverTimestamp' };
+  const base = isNew || hasFullPageShape(data) ? normalizePageForSave(data, { isNew }) : normalizePagePatch(data);
   const payload = {
-    ...data,
+    ...base,
     updatedAt: serverTimestamp,
   };
   if (isNew) payload.createdAt = serverTimestamp;
@@ -84,7 +98,7 @@ export function subscribePages(uid, onData, onError) {
   return pagesCollection(uid)
     .orderBy('updatedAt', 'desc')
     .onSnapshot(
-      (snapshot) => onData(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))),
+      (snapshot) => onData(snapshot.docs.map((item) => normalizePage({ id: item.id, ...item.data() }))),
       onError,
     );
 }
@@ -93,6 +107,21 @@ export async function savePage(uid, pageId, data, isNew = false) {
   await withFirestoreWriteTimeout(
     pagesCollection(uid).doc(pageId).set(buildPagePayload(data, isNew), { merge: true }),
   );
+}
+
+export async function archivePage(uid, pageId, reason = 'Archived by user') {
+  await savePage(uid, pageId, archivePatch(reason), false);
+}
+
+export async function unarchivePage(uid, pageId) {
+  await savePage(uid, pageId, unarchivePatch(), false);
+}
+
+export async function migratePageOriginFields(uid, page) {
+  const patch = buildOriginMigrationPatch(page);
+  if (!patch) return false;
+  await savePage(uid, page.id, patch, false);
+  return true;
 }
 
 export async function removePage(uid, pageId) {
@@ -106,7 +135,7 @@ export async function importPages(uid, backupPages) {
     const { id, createdAt, updatedAt, ...rest } = page;
     await withFirestoreWriteTimeout(
       pagesCollection(uid).doc(pageId).set({
-        ...rest,
+        ...normalizePageForSave(rest, { isNew: true }),
         importedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
         createdAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),

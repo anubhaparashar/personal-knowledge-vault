@@ -241,7 +241,7 @@ export default function SharedInboxPage({ pages = [], captures = [], loading = f
       rawText: pasteForm.text,
       rawUrl: pasteForm.url,
       sourcePlatform: pasteForm.url ? 'browser' : 'unknown',
-      origin: 'system-share',
+      origin: 'shared-inbox',
     });
     if (user?.uid) await saveSharedInboxCapture(user.uid, saved.id, saved, true).catch(() => {});
     setPasteForm({ title: '', url: '', text: '' });
