@@ -64,7 +64,9 @@ export default function SettingsPage({ pages, pdfs = [] }) {
       })
       .catch((statusError) => setManifestStatus(`Manifest unavailable: ${statusError.message}`));
 
-    if ('serviceWorker' in navigator) {
+    if (window.location.hostname.endsWith('github.io')) {
+      setServiceWorkerStatus('Service worker disabled on GitHub Pages while cache behavior is stabilized');
+    } else if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL)
         .then((registration) => setServiceWorkerStatus(registration ? 'Service worker registered' : 'Service worker not registered yet'))
         .catch((statusError) => setServiceWorkerStatus(`Service worker check failed: ${statusError.message}`));

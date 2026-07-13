@@ -15,10 +15,23 @@ import ResearchCalendarPage from './pages/ResearchCalendarPage';
 import ShareCapturePage from './pages/ShareCapturePage';
 import SharedInboxPage from './pages/SharedInboxPage';
 
+function currentHashRoute() {
+  return window.location.hash || '#/';
+}
+
+function logRoute(hash) {
+  console.info('[app] current route', { route: hash || '#/' });
+}
+
 function useHashRoute() {
-  const [hash, setHash] = useState(window.location.hash || '#/');
+  const [hash, setHash] = useState(currentHashRoute);
   useEffect(() => {
-    const handler = () => setHash(window.location.hash || '#/');
+    logRoute(currentHashRoute());
+    const handler = () => {
+      const nextHash = currentHashRoute();
+      logRoute(nextHash);
+      setHash(nextHash);
+    };
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
   }, []);

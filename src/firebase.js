@@ -18,6 +18,15 @@ export const googleApiKey = (import.meta.env.VITE_GOOGLE_API_KEY || '').trim();
 export const googlePickerAppId = googleOAuthClientId.split('-')[0] || '';
 export const googleDriveFolderId = (import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '').trim();
 export const googleApprovedEmail = (import.meta.env.VITE_GOOGLE_APPROVED_EMAIL || allowedEmail || '').trim().toLowerCase();
+export const firebaseConfigPresence = Object.freeze({
+  sdkLoaded: Boolean(firebaseNamespace),
+  apiKey: Boolean(firebaseConfig.apiKey),
+  authDomain: Boolean(firebaseConfig.authDomain),
+  projectId: Boolean(firebaseConfig.projectId),
+  messagingSenderId: Boolean(firebaseConfig.messagingSenderId),
+  appId: Boolean(firebaseConfig.appId),
+  storageBucket: Boolean(configuredStorageBucket),
+});
 export const firebaseStorageBucket = configuredStorageBucket;
 
 let app = null;

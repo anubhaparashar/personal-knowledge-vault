@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+﻿import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   allowedEmail,
   allowedUid,
@@ -25,20 +25,30 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    console.info('[app] auth initialization status', {
+      firebaseConfigured: isFirebaseConfigured,
+      authAvailable: Boolean(auth),
+      status: auth ? 'listening' : 'unavailable',
+    });
+
     if (!auth) {
       setLoading(false);
+      console.info('[app] auth initialization status', { status: 'ready', signedIn: false });
       return undefined;
     }
 
     return auth.onAuthStateChanged(async (nextUser) => {
+      console.info('[app] auth state changed', { status: nextUser ? 'signed-in' : 'signed-out' });
       if (nextUser && !isApprovedUser(nextUser)) {
         await auth.signOut();
         setUser(null);
         setError(accessMessage('This account is not approved for this vault.'));
+        console.warn('[app] auth initialization status', { status: 'access-denied' });
       } else {
         setUser(nextUser);
       }
       setLoading(false);
+      console.info('[app] auth initialization status', { status: 'ready', signedIn: Boolean(nextUser) });
     });
   }, []);
 
