@@ -52,7 +52,7 @@ Enable these services in the Firebase project used by this repository:
 - Firebase Hosting, if deploying there
 - Firebase Storage
 
-Scrape a Link uses Firestore queued requests processed by GitHub Actions. Instant scraping is disabled to keep the project free.
+Add from URL uses Firestore queued requests processed by GitHub Actions. Hybrid discovery mode keeps manual saves instant while automatic discovery runs in the background.
 
 ## Install
 

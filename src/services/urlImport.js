@@ -13,5 +13,5 @@
 
 export async function importUrlContent(sourceUrl) {
   validateImportUrl(sourceUrl);
-  throw new Error('Instant scraping is disabled to keep the project free. Requests are processed by GitHub Actions.');
+  throw new Error('Automatic discovery requests are queued and processed by GitHub Actions so the app can stay free. Use Add from URL to queue this link.');
 }

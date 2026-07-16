@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extractImportantDates, formatDetectedDate, selectNextImportantDate } from '../src/utils/dates.js';
 import { detectExternalUrls } from '../src/utils/sourceLinks.js';
-import { isArchivedPage, isDiaryEntry, isDiscoveryRecord, isMyEntry, normalizePage, pageMatchesSection, savedDiscoveryPatch } from '../src/utils/pageModel.js';
+import { isArchivedPage, isDiaryEntry, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, pageMatchesSection, savedDiscoveryPatch, sourceTypeForPage } from '../src/utils/pageModel.js';
 import { generateSmartMetadata } from '../src/utils/intelligence.js';
 import {
   buildLinkedInImportResult,
@@ -88,22 +88,24 @@ run('Manual entry menu includes all requested entry types and URL/file actions',
 run('Record origins and queue-based discovery state are represented in frontend', () => {
   const discovery = read('src/services/discovery.js');
   const dashboard = read('src/pages/DashboardPage.jsx');
+  const sourcesPanel = read('src/components/DiscoverySettingsPanel.jsx');
   assert.match(discovery, /auto-discovered/);
   assert.match(discovery, /manual/);
   assert.match(discovery, /imported-link/);
   assert.match(discovery, /imported-file/);
   assert.match(discovery, /scholarly-api/);
   assert.match(discovery, /discoveryRequests/);
-  assert.match(dashboard, /GitHub Actions scheduled/);
-  assert.match(dashboard, /Queue-based, no Firebase Functions/);
-  assert.match(dashboard, /Instant scraping is disabled to keep the project free/);
-  assert.match(dashboard, /Open Research Discovery Workflow/);
-  assert.match(dashboard, /Quick Refresh/);
-  assert.match(dashboard, /Full Web Scan/);
-  assert.match(dashboard, /Scrape a Link/);
-  assert.match(dashboard, /Scan One Source/);
+  assert.match(dashboard, /Discovery status summary/);
+  assert.match(dashboard, /Sources enabled/);
+  assert.match(dashboard, /Scraped Entries/);
+  assert.match(dashboard, /Shareable Entries/);
   assert.match(dashboard, /const \[discoveryRequests, setDiscoveryRequests\] = useState\(\[\]\)/);
   assert.match(dashboard, /Array\.isArray\(discoveryRequests\)/);
+  assert.doesNotMatch(dashboard, /Quick Refresh|Full Web Scan|Scrape a Link|Scan One Source/);
+  assert.match(sourcesPanel, /GitHub Actions scheduled/);
+  assert.match(sourcesPanel, /Queue-based, no Firebase Functions/);
+  assert.match(sourcesPanel, /Open Research Discovery Workflow/);
+  assert.match(sourcesPanel, /Scan Now/);
 });
 
 run('Origin model separates diary, my entries, discoveries and archives', () => {
@@ -111,20 +113,30 @@ run('Origin model separates diary, my entries, discoveries and archives', () => 
   const scholarship = normalizePage({ id: 'disc-1', title: 'Scholarship', category: 'Research Opportunities/Scholarships', origin: 'auto-discovered', createdByUser: false, discoveryRunId: 'run-1' });
   const saved = normalizePage({ ...scholarship, ...savedDiscoveryPatch(scholarship) });
   const archivedManual = normalizePage({ id: 'note-1', title: 'Manual note', origin: 'manual', createdByUser: true, isArchived: true });
+  const legacySourceRecord = normalizePage({ id: 'legacy-source', title: 'Old source URL record', sourceUrl: 'https://example.org/call' });
+  const shareableManual = normalizePage({ id: 'shareable-1', title: 'Shared manual note', origin: 'manual', createdByUser: true, shareEnabled: true, shareId: 'share_abc' });
 
   assert.equal(isDiaryEntry(diary), true);
   assert.equal(pageMatchesSection(diary, 'diary'), true);
   assert.equal(pageMatchesSection(scholarship, 'diary'), false);
   assert.equal(isDiscoveryRecord(scholarship), true);
+  assert.equal(scholarship.sourceType, 'discovery');
   assert.equal(pageMatchesSection(scholarship, 'discoveries'), true);
   assert.equal(pageMatchesSection(scholarship, 'my-entries'), false);
   assert.equal(isMyEntry(saved), true);
+  assert.equal(saved.sourceType, 'manual');
+  assert.equal(saved.shareEnabled, false);
   assert.equal(pageMatchesSection(saved, 'my-entries'), true);
   assert.equal(isArchivedPage(archivedManual), true);
   assert.equal(pageMatchesSection(archivedManual, 'my-entries'), false);
   assert.equal(pageMatchesSection(archivedManual, 'archives'), true);
   assert.equal(pageMatchesSection(scholarship, 'notes', { allNotesView: 'my-entries' }), false);
   assert.equal(pageMatchesSection(scholarship, 'notes', { allNotesView: 'everything' }), true);
+  assert.equal(sourceTypeForPage(legacySourceRecord), 'discovery');
+  assert.equal(isDiscoveryRecord(legacySourceRecord), true);
+  assert.equal(pageMatchesSection(legacySourceRecord, 'my-entries'), false);
+  assert.equal(isShareEnabledPage(shareableManual), true);
+  assert.equal(pageMatchesSection(shareableManual, 'shareable'), true);
 });
 
 run('Archive and public share surfaces are wired without exposing private pages', () => {
@@ -137,10 +149,14 @@ run('Archive and public share surfaces are wired without exposing private pages'
   assert.match(dashboard, /Archive selected/);
   assert.match(dashboard, /Mark as Discovery/);
   assert.match(dashboard, /ShareEntryDialog/);
+  assert.match(dashboard, /Make shareable/);
   assert.match(reader, /Save to My Entries/);
   assert.match(reader, /Archive/);
   assert.match(publicShares, /publicShares/);
   assert.match(publicShares, /Encrypted notes cannot be publicly shared/);
+  assert.match(publicShares, /Only manual entries can be made shareable/);
+  assert.match(publicShares, /shareEnabled: true/);
+  assert.match(publicShares, /visibility: 'shareable'/);
   assert.match(rules, /match \/publicShares\/\{shareId\}/);
   assert.match(rules, /allow get:/);
   assert.match(rules, /allow list: if false/);
@@ -180,11 +196,13 @@ run('GitHub Actions runner writes run logs and queued request statuses', () => {
 run('Manual URL import queues link requests and exposes request statuses', () => {
   const modal = read('src/components/ImportFromLinkModal.jsx');
   [
-    'Scrape a Link',
+    'Queue link discovery',
     'Queue Link',
     'Open Workflow',
     'Queued link requests',
-    'Instant scraping is disabled to keep the project free',
+    'Hybrid discovery mode',
+    'Manual entries are saved instantly',
+    'Discovery status:',
     'requestStatusLabel',
   ].forEach((label) => assert.match(modal, new RegExp(label.replace(/[+]/g, '\\+'))));
   assert.match(modal, /Array\.isArray\(requests\)/);
@@ -331,10 +349,10 @@ run('Editor and Actions runner expose truthful free source enrichment states', (
   const settings = read('src/pages/SettingsPage.jsx');
   assert.match(editor, /detectExternalUrls/);
   assert.match(editor, /Source enrichment:/);
-  assert.match(editor, /Instant scraping is disabled to keep the project free/);
+  assert.match(editor, /Automatic discovery requests are queued and processed by GitHub Actions/);
   assert.match(editor, /Enrich from detected link/);
   assert.match(editor, /Recheck source/);
-  assert.match(urlImport, /Requests are processed by GitHub Actions/);
+  assert.match(urlImport, /processed by GitHub Actions so the app can stay free/);
   assert.doesNotMatch(urlImport, /VITE_URL_IMPORT_ENDPOINT|Authorization: `Bearer/);
   assert.match(functionsIndex, /discoverFromUrl/);
   assert.match(functionsIndex, /saveRecords/);

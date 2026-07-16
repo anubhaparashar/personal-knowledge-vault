@@ -1,6 +1,6 @@
 import { db, firebaseNamespace } from '../firebase';
 import { withFirestoreWriteTimeout, savePage } from './pages';
-import { buildPublicSharePayload, publicShareUrl } from '../utils/pageModel';
+import { buildPublicSharePayload, isMyEntry, normalizePage, publicShareUrl } from '../utils/pageModel';
 
 function requireDb() {
   if (!db) throw new Error('Firebase is not configured.');
@@ -12,7 +12,7 @@ function publicSharesCollection() {
 }
 
 function createShareId() {
-  if (crypto?.randomUUID) return `share_${crypto.randomUUID().replace(/-/g, '')}`;
+  if (globalThis.crypto?.randomUUID) return `share_${globalThis.crypto.randomUUID().replace(/-/g, '')}`;
   return `share_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
@@ -31,39 +31,49 @@ function expiryDateFor(value = 'never', customValue = '') {
 
 export async function createPublicShare(uid, page, options = {}) {
   if (!uid) throw new Error('Sign in before creating a share link.');
-  if (page.secure) throw new Error('Encrypted notes cannot be publicly shared unless you create a separate unencrypted share copy.');
-  const shareId = page.shareId || createShareId();
+  const normalized = normalizePage(page);
+  if (!normalized.id) throw new Error('Save this entry before sharing it.');
+  if (!isMyEntry(normalized)) throw new Error('Only manual entries can be made shareable. Scraped entries stay private unless saved to My Entries first.');
+  if (normalized.secure) throw new Error('Encrypted notes cannot be publicly shared unless you create a separate unencrypted share copy.');
+
+  const shareId = normalized.shareId || createShareId();
   const shareExpiresAt = expiryDateFor(options.expiry || 'never', options.customExpiry || '');
-  const payload = buildPublicSharePayload(page, { ...options, shareExpiresAt });
+  const payload = buildPublicSharePayload(normalized, { ...options, shareExpiresAt });
   const publicShareExpiresAt = shareExpiresAt
     ? firebaseNamespace.firestore.Timestamp.fromDate(new Date(shareExpiresAt))
     : null;
+
   await withFirestoreWriteTimeout(publicSharesCollection().doc(shareId).set({
     ...payload,
     shareExpiresAt: publicShareExpiresAt,
     updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
   }, { merge: true }));
-  await savePage(uid, page.id, {
-    visibility: 'share-link',
+
+  await savePage(uid, normalized.id, {
+    visibility: 'shareable',
+    shareEnabled: true,
     shareId,
     shareCreatedAt: new Date().toISOString(),
     shareExpiresAt,
   }, false);
+
   return { shareId, url: publicShareUrl(shareId) };
 }
 
 export async function disablePublicShare(uid, page) {
   if (!uid) throw new Error('Sign in before disabling a share link.');
-  if (page.shareId) {
-    await withFirestoreWriteTimeout(publicSharesCollection().doc(page.shareId).set({
+  const normalized = normalizePage(page);
+  if (normalized.shareId) {
+    await withFirestoreWriteTimeout(publicSharesCollection().doc(normalized.shareId).set({
       active: false,
       visibility: 'private',
       disabledAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebaseNamespace.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }));
   }
-  await savePage(uid, page.id, {
+  await savePage(uid, normalized.id, {
     visibility: 'private',
+    shareEnabled: false,
     shareId: null,
     shareCreatedAt: null,
     shareExpiresAt: null,

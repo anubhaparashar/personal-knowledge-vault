@@ -1,63 +1,67 @@
-import React, { useMemo, useState } from 'react';
-import { Copy, ExternalLink, Share2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Copy, ExternalLink, Link2, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { createPublicShare, disablePublicShare } from '../services/publicShares';
-import { normalizePage, privateEntryUrl, publicShareUrl } from '../utils/pageModel';
+import { isMyEntry, normalizePage, privateEntryUrl, publicShareUrl } from '../utils/pageModel';
 
 export default function ShareEntryDialog({ page, open, onClose }) {
   const { user } = useAuth();
   const normalized = useMemo(() => (page ? normalizePage(page) : null), [page]);
-  const [options, setOptions] = useState({
-    includeSummary: true,
-    includeFullNote: false,
-    includeSourceUrl: true,
-    includeImportantDates: true,
-    includeAttachments: false,
-    expiry: 'never',
-    customExpiry: '',
-  });
   const [message, setMessage] = useState('');
   const [working, setWorking] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareDisabled, setShareDisabled] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setMessage('');
+    setWorking(false);
+    setShareUrl('');
+    setShareDisabled(false);
+  }, [open, normalized?.id]);
 
   if (!open || !normalized) return null;
 
   const privateUrl = privateEntryUrl(normalized.id);
-  const currentPublicUrl = normalized.shareId ? publicShareUrl(normalized.shareId) : '';
-
-  function update(key, value) {
-    setOptions((current) => ({ ...current, [key]: value }));
-  }
+  const canSharePublicly = isMyEntry(normalized);
+  const currentShareUrl = !shareDisabled && (shareUrl || (normalized.shareEnabled && normalized.shareId ? publicShareUrl(normalized.shareId) : ''));
 
   async function copy(text, label = 'Link') {
-    await navigator.clipboard?.writeText(text);
-    setMessage(`${label} copied.`);
+    try {
+      await navigator.clipboard?.writeText(text);
+      setMessage(`${label} copied.`);
+    } catch {
+      setMessage('Could not copy the link in this browser.');
+    }
   }
 
-  async function createShare() {
-    setMessage('');
-    if (normalized.secure) {
-      setMessage('Encrypted notes cannot be publicly shared unless you create a separate unencrypted share copy.');
-      return;
-    }
+  async function makeShareable() {
+    if (!user?.uid) return setMessage('Sign in before creating a share link.');
     setWorking(true);
+    setMessage('');
     try {
-      const result = await createPublicShare(user?.uid, normalized, options);
-      await copy(result.url, 'Public share link');
+      const result = await createPublicShare(user.uid, normalized, { includeFullNote: true });
+      setShareUrl(result.url);
+      setShareDisabled(false);
+      setMessage('Share link enabled.');
     } catch (error) {
-      setMessage(error.message || 'Could not create public share link.');
+      setMessage(error.message || 'Could not create a share link.');
     } finally {
       setWorking(false);
     }
   }
 
-  async function disableShare() {
-    setMessage('');
+  async function turnOffSharing() {
+    if (!user?.uid) return setMessage('Sign in before disabling a share link.');
     setWorking(true);
+    setMessage('');
     try {
-      await disablePublicShare(user?.uid, normalized);
-      setMessage('Public share link disabled.');
+      await disablePublicShare(user.uid, normalized);
+      setShareUrl('');
+      setShareDisabled(true);
+      setMessage('Share link disabled.');
     } catch (error) {
-      setMessage(error.message || 'Could not disable share link.');
+      setMessage(error.message || 'Could not disable this share link.');
     } finally {
       setWorking(false);
     }
@@ -78,36 +82,31 @@ export default function ShareEntryDialog({ page, open, onClose }) {
         <section className="share-option-panel">
           <h3>Private app link</h3>
           <p>Only the signed-in authorised account can open this internal entry link.</p>
-          <div className="share-link-row"><code>{privateUrl}</code><button type="button" className="button secondary" onClick={() => copy(privateUrl, 'Private app link')}><Copy size={16} /> Copy private app link</button></div>
+          <div className="share-link-row">
+            <code>{privateUrl}</code>
+            <button type="button" className="button secondary" onClick={() => copy(privateUrl, 'Private app link')}><Copy size={16} /> Copy private link</button>
+          </div>
         </section>
 
         <section className="share-option-panel">
-          <h3>Public read-only link</h3>
-          {normalized.secure ? (
-            <p className="form-error">Encrypted notes cannot be publicly shared unless you create a separate unencrypted share copy.</p>
+          <h3>Public sharing</h3>
+          {!canSharePublicly ? (
+            <p>Scraped entries stay private. Save one to My Entries before making a public share link.</p>
+          ) : currentShareUrl ? (
+            <>
+              <p>This entry is shareable through the public read-only link below.</p>
+              <div className="share-link-row">
+                <code>{currentShareUrl}</code>
+                <button type="button" className="button secondary" onClick={() => copy(currentShareUrl, 'Share link')}><Copy size={16} /> Copy share link</button>
+              </div>
+              <div className="share-action-row">
+                <button type="button" className="button secondary" disabled={working} onClick={turnOffSharing}>Disable sharing</button>
+              </div>
+            </>
           ) : (
             <>
-              <div className="share-checkbox-grid">
-                <label><input type="checkbox" checked={options.includeSummary} onChange={(event) => update('includeSummary', event.target.checked)} /> Include summary only</label>
-                <label><input type="checkbox" checked={options.includeFullNote} onChange={(event) => update('includeFullNote', event.target.checked)} /> Include full note</label>
-                <label><input type="checkbox" checked={options.includeSourceUrl} onChange={(event) => update('includeSourceUrl', event.target.checked)} /> Include source URL</label>
-                <label><input type="checkbox" checked={options.includeImportantDates} onChange={(event) => update('includeImportantDates', event.target.checked)} /> Include important dates</label>
-                <label><input type="checkbox" checked={options.includeAttachments} onChange={(event) => update('includeAttachments', event.target.checked)} /> Include attachments</label>
-              </div>
-              <label className="field-label">Expiry
-                <select value={options.expiry} onChange={(event) => update('expiry', event.target.value)}>
-                  <option value="never">Never</option>
-                  <option value="7-days">7 days</option>
-                  <option value="30-days">30 days</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              {options.expiry === 'custom' ? <label className="field-label">Custom expiry<input type="datetime-local" value={options.customExpiry} onChange={(event) => update('customExpiry', event.target.value)} /></label> : null}
-              {currentPublicUrl ? <div className="share-link-row"><code>{currentPublicUrl}</code><button type="button" className="button secondary" onClick={() => copy(currentPublicUrl, 'Public share link')}><Copy size={16} /> Copy link</button></div> : null}
-              <div className="modal-actions">
-                <button type="button" className="button primary" disabled={working} onClick={createShare}><Share2 size={16} /> Create shareable public link</button>
-                <button type="button" className="button secondary" disabled={working || !normalized.shareId} onClick={disableShare}>Disable share link</button>
-              </div>
+              <p>Private by default. Create a public read-only link only when you want this manual entry to be shareable.</p>
+              <button type="button" className="button primary" disabled={working} onClick={makeShareable}><Link2 size={16} /> {working ? 'Creating...' : 'Make shareable'}</button>
             </>
           )}
         </section>
@@ -115,11 +114,14 @@ export default function ShareEntryDialog({ page, open, onClose }) {
         {normalized.sourceUrl ? (
           <section className="share-option-panel">
             <h3>Citation/source link</h3>
-            <div className="share-link-row"><code>{normalized.sourceUrl}</code><button type="button" className="button secondary" onClick={() => copy(normalized.sourceUrl, 'Source link')}><ExternalLink size={16} /> Copy citation/source link</button></div>
+            <div className="share-link-row">
+              <code>{normalized.sourceUrl}</code>
+              <button type="button" className="button secondary" onClick={() => copy(normalized.sourceUrl, 'Source link')}><ExternalLink size={16} /> Copy source link</button>
+            </div>
           </section>
         ) : null}
 
-        {message ? <p className={message.includes('Could not') || message.includes('cannot') ? 'form-error' : 'status-message'}>{message}</p> : null}
+        {message ? <p className="status-message">{message}</p> : null}
       </div>
     </div>
   );
