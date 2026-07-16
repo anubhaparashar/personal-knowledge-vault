@@ -67,16 +67,19 @@ import {
   subscribeDiscoveryStats,
   subscribeLatestDiscoveryRun,
 } from '../services/discovery';
-import { formatDate } from '../utils/content';
+import { formatDate, htmlToText } from '../utils/content';
 import { daysUntilDate, formatDetectedDate, isCalendarImportantDate, selectNextImportantDate } from '../utils/dates';
 import { buildResearchDateEvents, sortResearchPages } from '../utils/researchDates';
 import { entryTypeForFocus, openManualEntry } from '../utils/manualEntry';
 import {
+  entryPagesToHtml,
   entryTypeForPage,
   entryTypeLabel,
+  getEntryPages,
   isArchivedPage,
   isDiscoveryRecord,
   isMyEntry,
+  isShareEnabledPage,
   normalizePage,
   originLabel,
   originTone,
@@ -108,7 +111,8 @@ const DEADLINE_SCOPE_FILTERS = ['All', 'Scholarships', 'Postdoctoral', 'Conferen
 const DEADLINE_TIME_FILTERS = ['Due in 7 days', 'Due in 30 days', 'Due in 90 days', 'Overdue', 'Completed', 'No deadline recorded'];
 const ALL_NOTES_VIEW_OPTIONS = [
   { value: 'my-entries', label: 'My Entries' },
-  { value: 'discoveries', label: 'Discoveries' },
+  { value: 'discoveries', label: 'Scraped Entries' },
+  { value: 'shareable', label: 'Shareable Entries' },
   { value: 'shared-inbox', label: 'Shared Inbox' },
   { value: 'archived', label: 'Archived' },
   { value: 'everything', label: 'Everything' },
@@ -119,7 +123,7 @@ const ORIGIN_FILTER_OPTIONS = [
   { value: 'pasted', label: 'Pasted' },
   { value: 'imported', label: 'Imported' },
   { value: 'shared', label: 'Shared' },
-  { value: 'auto-discovered', label: 'Auto-discovered' },
+  { value: 'auto-discovered', label: 'Scraped/discovered' },
   { value: 'saved-discovery', label: 'Saved Discovery' },
 ];
 const MY_ENTRY_TYPE_OPTIONS = [
@@ -141,15 +145,22 @@ const MY_ENTRY_TYPE_OPTIONS = [
 const ARCHIVE_TABS = [
   { value: 'all', label: 'All Archived' },
   { value: 'my', label: 'My Archived Entries' },
-  { value: 'discoveries', label: 'Archived Discoveries' },
+  { value: 'discoveries', label: 'Archived Scraped Entries' },
   { value: 'applications', label: 'Archived Applications' },
   { value: 'proposals', label: 'Archived Proposals' },
+];
+const DASHBOARD_TABS = [
+  { value: 'my-work', label: 'My Work' },
+  { value: 'discoveries', label: 'Scraped Entries' },
+  { value: 'deadlines', label: 'Deadlines' },
+  { value: 'archived', label: 'Archived' },
 ];
 const FOCUS_LABELS = {
   overview: 'Research Library',
   notes: 'All Notes',
   'my-entries': 'My Entries',
-  discoveries: 'Discoveries',
+  discoveries: 'Scraped Entries',
+  shareable: 'Shareable Entries',
   archives: 'Archives',
   calendar: 'Research Calendar',
   deadlines: 'Upcoming Deadlines',
@@ -162,7 +173,8 @@ const FOCUS_LABELS = {
   scholarships: 'Scholarships',
   postdoctoral: 'Postdoctoral Opportunities',
   fellowships: 'Fellowships',
-  grants: 'Grants and Jobs',
+  grants: 'Grants',
+  jobs: 'Jobs',
   conferences: 'Conferences',
   journals: 'Journals',
   'special-issues': 'Special Issues',
@@ -202,8 +214,12 @@ function statusForDeadline(deadline, days) {
 function deadlineTone(status) {
   return normalize(status).replace(/\s+/g, '-');
 }
+function entryPagesText(page) {
+  if (page.secure) return '';
+  return htmlToText(entryPagesToHtml(getEntryPages(page)));
+}
 function summarizeText(page) {
-  return [page.title, page.summary, page.plainText, page.category, page.sourceDomain, page.sourceTitle, page.sourceUrl, ...(page.tags || [])].filter(Boolean).join(' ');
+  return [page.title, page.summary, page.plainText, entryPagesText(page), page.category, page.sourceDomain, page.sourceTitle, page.sourceUrl, ...(page.tags || [])].filter(Boolean).join(' ');
 }
 function categoryCount(page, card) {
   const source = normalize(summarizeText(page));
@@ -253,7 +269,7 @@ function attachmentIsPdf(file = {}) {
 }
 function sourceForScope(page, scope) {
   if (scope === 'titles') return page.title || '';
-  if (scope === 'content') return [page.plainText, page.summary].filter(Boolean).join(' ');
+  if (scope === 'content') return [page.plainText, page.summary, entryPagesText(page)].filter(Boolean).join(' ');
   if (scope === 'categories') return page.category || '';
   if (scope === 'tags') return (page.tags || []).join(' ');
   if (scope === 'sources') return [page.sourceUrl, page.sourceDomain, page.sourceTitle].filter(Boolean).join(' ');
@@ -312,6 +328,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const [archiveHasDeadline, setArchiveHasDeadline] = useState('all');
   const [selectedPageIds, setSelectedPageIds] = useState(() => new Set());
   const [sharePage, setSharePage] = useState(null);
+  const [dashboardTab, setDashboardTab] = useState('my-work');
 
   useEffect(() => { localStorage.setItem(LIBRARY_SEARCH_KEY, search); }, [search]);
   useEffect(() => { localStorage.setItem(LIBRARY_VIEW_KEY, viewMode); }, [viewMode]);
@@ -419,17 +436,12 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     return items;
   }, [categories, tags]);
 
-  const stats = useMemo(() => {
-    const drivePdfCount = pdfs.length + myEntryPages.reduce((total, page) => total + [...(page.attachments || []), ...(page.inlineFiles || [])].filter(attachmentIsPdf).length, 0);
-    return [
-      { icon: Files, value: myEntryPages.length, label: 'My entries', helper: 'Created or intentionally saved' },
-      { icon: Search, value: discoveryPages.length, label: 'Discoveries', helper: 'Auto-discovered records' },
-      { icon: Archive, value: archivedPages.length, label: 'Archived', helper: 'Hidden, not deleted' },
-      { icon: CalendarClock, value: deadlines.length, label: 'Deadlines', helper: 'Tracked active dates' },
-      { icon: Lock, value: myEntryPages.filter((page) => page.secure).length, label: 'Secure notes', helper: 'Encrypted entries' },
-      { icon: FileArchive, value: drivePdfCount, label: 'Drive PDFs', helper: 'Linked documents' },
-    ];
-  }, [archivedPages.length, deadlines.length, discoveryPages.length, myEntryPages, pdfs.length]);
+  const stats = useMemo(() => [
+    { icon: Files, value: myEntryPages.length, label: 'My Entries', helper: 'Created or accepted records' },
+    { icon: Search, value: discoveryPages.length, label: 'Scraped Entries', helper: 'GitHub Actions results' },
+    { icon: CalendarClock, value: deadlines.filter((item) => !item.deadline?.completed).length, label: 'Upcoming Deadlines', helper: 'Active tracked dates' },
+    { icon: Archive, value: archivedPages.length, label: 'Archived', helper: 'Hidden, not deleted' },
+  ], [archivedPages.length, deadlines, discoveryPages.length, myEntryPages.length]);
 
   const workspaceCounts = useMemo(() => new Map(WORKSPACE_CARDS.map((card) => [card.key, myEntryPages.filter((page) => categoryCount(page, card)).length])), [myEntryPages]);
 
@@ -437,7 +449,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     const q = search.trim().toLowerCase();
     const sectionOptions = {
       allNotesView,
-      includeArchived: includeArchived || focus === 'archives' || myStatusFilter === 'archived',
+      includeArchived: includeArchived || focus === 'archives',
     };
     let items = normalizedPages.filter((page) => pageMatchesSection(page, focus, sectionOptions));
 
@@ -504,23 +516,30 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const latestStats = latestDiscoveryRun?.stats || {};
   const contextEntry = entryTypeForFocus(focus);
   const selectedCount = selectedPageIds.size;
-  const isDiscoveryFocus = focus === 'discoveries' || ['scholarships', 'postdoctoral', 'fellowships', 'grants', 'conferences', 'journals', 'special-issues', 'submission-deadlines'].includes(focus);
+  const isDiscoveryFocus = focus === 'discoveries' || ['scholarships', 'postdoctoral', 'fellowships', 'grants', 'jobs', 'conferences', 'journals', 'special-issues', 'submission-deadlines'].includes(focus);
+  const isShareableFocus = focus === 'shareable';
   const libraryTitle = focus === 'my-entries'
     ? 'My Entries'
     : focus === 'discoveries'
-      ? 'Discoveries'
-      : focus === 'archives'
+      ? 'Scraped Entries'
+      : focus === 'shareable'
+        ? 'Shareable Entries'
+        : focus === 'archives'
         ? 'Archives'
         : focus === 'notes'
           ? 'All Notes'
           : focusLabel;
-  const libraryEyebrow = focus === 'archives' ? 'ARCHIVES' : isDiscoveryFocus ? 'DISCOVERED' : 'NOTE LIBRARY';
-  const emptyTitle = focus === 'diary' ? 'No diary entries yet.' : focus === 'archives' ? 'No archived records' : 'No pages match this search';
+  const libraryEyebrow = focus === 'archives' ? 'ARCHIVES' : isDiscoveryFocus ? 'SCRAPED ENTRIES' : isShareableFocus ? 'SHAREABLE' : 'NOTE LIBRARY';
+  const emptyTitle = focus === 'diary' ? 'No diary entries yet.' : focus === 'archives' ? 'No archived records' : focus === 'discoveries' ? 'No scraped entries yet' : focus === 'shareable' ? 'No shareable entries yet' : 'No pages match this search';
   const emptyDescription = focus === 'diary'
     ? 'Write a personal note, reflection, idea, or daily research update.'
     : focus === 'archives'
-      ? 'Archive entries or discoveries to hide them without deleting.'
-      : 'Try a different search, scope or filter, or create a new research entry.';
+      ? 'Archive manual and scraped entries to hide them without deleting.'
+      : focus === 'discoveries'
+        ? 'Queued discovery results from GitHub Actions will appear here.'
+        : focus === 'shareable'
+          ? 'Manual entries appear here only after you enable a public share link.'
+          : 'Try a different search, scope or filter, or create a new research entry.';
 
   function dismissReminder(id) {
     const next = new Set(dismissedReminders);
@@ -672,13 +691,13 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   }
   async function bulkMarkMyEntry() {
     if (!user?.uid) return;
-    await Promise.all(selectedPages().map((page) => savePage(user.uid, page.id, { origin: 'saved-discovery', createdOrigin: 'saved-discovery', originalOrigin: page.origin || 'auto-discovered', createdByUser: true, isArchived: false, archivedAt: null, archivedReason: null }, false)));
+    await Promise.all(selectedPages().map((page) => savePage(user.uid, page.id, { origin: 'saved-discovery', createdOrigin: 'saved-discovery', originalOrigin: page.origin || 'auto-discovered', sourceType: 'manual', createdByUser: true, isArchived: false, archived: false, archivedAt: null, archivedReason: null, visibility: 'private', shareEnabled: false, shareId: null, shareCreatedAt: null, shareExpiresAt: null }, false)));
     clearSelection();
   }
 
   async function bulkMarkDiscovery() {
     if (!user?.uid) return;
-    await Promise.all(selectedPages().map((page) => savePage(user.uid, page.id, { origin: 'auto-discovered', createdOrigin: 'auto-discovered', originalOrigin: page.originalOrigin || page.origin || 'manual', createdByUser: false }, false)));
+    await Promise.all(selectedPages().map((page) => savePage(user.uid, page.id, { origin: 'auto-discovered', createdOrigin: 'auto-discovered', originalOrigin: page.originalOrigin || page.origin || 'manual', sourceType: 'discovery', createdByUser: false, visibility: 'private', shareEnabled: false, shareId: null, shareCreatedAt: null, shareExpiresAt: null }, false)));
     clearSelection();
   }
 
@@ -703,9 +722,16 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   }
 
   async function duplicatePage(page) {
+    const now = new Date().toISOString();
+    const copiedPages = getEntryPages(page).map((entryPage, index) => ({
+      ...entryPage,
+      order: index,
+      createdAt: now,
+      updatedAt: now,
+    }));
     const payload = page.secure
       ? { title: `${page.title || 'Locked note'} copy`, category: page.category || 'Private Vault', tagsText: (page.tags || []).join(', '), sourceUrl: '', summary: '', html: '<p></p>', secure: false, origin: 'manual' }
-      : { title: `${page.title || 'Untitled'} copy`, category: page.category || 'Uncategorised', tagsText: (page.tags || []).join(', '), sourceUrl: page.sourceUrl || '', summary: page.summary || '', html: page.html || '<p></p>', secure: false, origin: 'manual' };
+      : { title: `${page.title || 'Untitled'} copy`, category: page.category || 'Uncategorised', tagsText: (page.tags || []).join(', '), sourceUrl: page.sourceUrl || '', summary: page.summary || '', html: page.html || '<p></p>', content: page.content || page.html || '<p></p>', pages: copiedPages, secure: false, origin: 'manual' };
     openEditorWithPreload(payload);
   }
 
@@ -714,170 +740,201 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     await removePage(user.uid, page.id);
   }
 
+  const setupIssue = error && /firebase|configured|permission|not configured|api key/i.test(error);
+  const dashboardDeadlines = deadlines.filter((item) => !item.deadline?.completed).slice(0, 6);
+  const dashboardDiscoveries = [...discoveryPages].sort(sortByUpdated).slice(0, 5);
+  const dashboardArchived = [...archivedPages].sort(sortByUpdated).slice(0, 5);
+  const discoverySummary = [
+    { label: 'Status', value: currentActivity },
+    { label: 'Sources enabled', value: enabledSourceCount },
+    { label: 'Next scheduled scan', value: FIXED_DISCOVERY_SCHEDULE_LABEL },
+    { label: 'Last successful scan', value: formatDiscoveryTimestamp(discoveryStats?.lastSuccessfulScanAt) },
+  ];
+
+  function renderSyncMessage() {
+    if (!error) return null;
+    if (setupIssue) {
+      return (
+        <div className="setup-message">
+          <strong>Backend setup needed</strong>
+          <span>Connect Firebase in Settings before live sync is available.</span>
+        </div>
+      );
+    }
+    return <div className="alert-panel error"><strong>Library sync issue</strong><span>{error}</span></div>;
+  }
+
+  function renderDeadlineRows(items, emptyTitle = 'No upcoming deadlines') {
+    return (
+      <div className="deadline-list" aria-label="Upcoming deadline list">
+        {items.map((item) => (
+          <a key={item.id} className={`deadline-row ${deadlineTone(item.status)}`} href={`#/read/${item.page.id}`}>
+            <span className="deadline-row-icon"><CalendarClock size={18} strokeWidth={1.8} /></span>
+            <span className="deadline-row-main">
+              <strong>{item.page.secure ? 'Locked note' : item.page.title}</strong>
+              <small>{item.page.category || 'Uncategorised'} - {item.kind}</small>
+            </span>
+            <span className="deadline-row-date">{formatDetectedDate(item.deadline)}</span>
+            <Badge tone={deadlineTone(item.status)}>{item.status}</Badge>
+            <span className="deadline-row-days">{daysRemainingLabel(item.days)}</span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </a>
+        ))}
+        {!items.length ? <EmptyState icon={CalendarClock} title={emptyTitle} compact /> : null}
+      </div>
+    );
+  }
+
+  function renderCompactPageRows(items, emptyTitle, emptyDescription, options = {}) {
+    const allowSelection = options.allowSelection !== false;
+    return (
+      <div className={`note-library ${viewMode === 'list' ? 'is-list' : 'is-grid'}`}>
+        {items.map((page) => {
+          const normalizedPage = normalizePage(page);
+          const deadline = primaryDates.get(normalizedPage.id);
+          const preview = normalizedPage.secure ? 'Encrypted entry. Unlock it to read the contents.' : (normalizedPage.summary || normalizedPage.plainText || 'No summary yet.').slice(0, 150);
+          const archived = isArchivedPage(normalizedPage);
+          const discovery = isDiscoveryRecord(normalizedPage);
+          const ownedEntry = isMyEntry(normalizedPage);
+          const shareable = isShareEnabledPage(normalizedPage);
+          const discoveredAt = normalizedPage.discoveredAt || normalizedPage.discovery?.firstDiscoveredAt || normalizedPage.createdAt;
+          const selected = selectedPageIds.has(normalizedPage.id);
+          return (
+            <article key={normalizedPage.id} className={`note-card ${normalizedPage.secure ? 'secure-note' : ''} ${archived ? 'is-archived' : ''}`}>
+              {allowSelection ? (
+                <label className="card-select-control" aria-label={`Select ${normalizedPage.title || 'entry'}`}>
+                  <input type="checkbox" checked={selected} onChange={() => toggleSelect(normalizedPage.id)} />
+                  <span>Select</span>
+                </label>
+              ) : null}
+              <div className="note-card-head">
+                <span className="category-pill">{normalizedPage.secure ? 'Private Vault' : normalizedPage.category || 'Uncategorised'}</span>
+                <div className="note-meta-row">
+                  <Badge tone={originTone(normalizedPage.origin)}>{originLabel(normalizedPage.origin)}</Badge>
+                  <Badge tone="neutral">{entryTypeLabel(entryTypeForPage(normalizedPage))}</Badge>
+                  {archived ? <Badge tone="neutral">Archived</Badge> : null}
+                  {shareable ? <Badge tone="completed">Shareable</Badge> : null}
+                  {deadline ? <Badge tone={deadlineTone(deadline.status)}>{deadline.status}</Badge> : null}
+                </div>
+              </div>
+              <h3>{normalizedPage.secure ? 'Locked entry' : normalizedPage.title || 'Untitled entry'}</h3>
+              <p>{preview}</p>
+              {discovery ? (
+                <div className="note-discovery-meta compact">
+                  <span>Source: {normalizedPage.discovery?.sourceName || normalizedPage.sourceDomain || 'Official source'}</span>
+                  <span>Status: {normalizedPage.discovery?.status || normalizedPage.discoveryState || 'active'}</span>
+                  <span>Discovered: {formatDiscoveryTimestamp(discoveredAt)}</span>
+                </div>
+              ) : null}
+              {deadline ? (
+                <div className="note-next-date">
+                  <CalendarClock size={15} />
+                  <span><strong>Next date</strong>{deadline.kind} - {formatDetectedDate(deadline.deadline)}</span>
+                  <small>{daysRemainingLabel(deadline.days)}</small>
+                </div>
+              ) : null}
+              <div className="note-card-foot">
+                <small>{discovery ? `Discovered ${formatDiscoveryTimestamp(discoveredAt)}` : `Updated ${formatDate(normalizedPage.updatedAt)}`}</small>
+                <div className="note-actions">
+                  <NoteAction icon={Eye} onClick={() => window.location.hash = `#/read/${normalizedPage.id}`}>Open</NoteAction>
+                  {ownedEntry ? <NoteAction icon={Edit3} onClick={() => window.location.hash = `#/edit/${normalizedPage.id}`}>Edit</NoteAction> : null}
+                  {ownedEntry ? <NoteAction icon={Share2} onClick={() => setSharePage(normalizedPage)}>{shareable ? 'Share link' : 'Make shareable'}</NoteAction> : null}
+                  {ownedEntry ? <NoteAction icon={Copy} onClick={() => duplicatePage(normalizedPage)}>Duplicate</NoteAction> : null}
+                  {discovery ? <NoteAction icon={CheckCircle2} onClick={() => saveDiscoveryToMyEntries(normalizedPage)}>Save to My Entries</NoteAction> : null}
+                  {normalizedPage.sourceUrl ? <NoteAction icon={ExternalLink} onClick={() => window.open(normalizedPage.sourceUrl, '_blank', 'noopener,noreferrer')}>Source</NoteAction> : null}
+                  <NoteAction icon={Archive} onClick={() => toggleArchive(normalizedPage)}>{archived ? 'Restore' : 'Archive'}</NoteAction>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+        {!items.length ? (
+          <EmptyState
+            icon={Grid2X2}
+            title={emptyTitle}
+            actions={focus === 'archives' ? null : focus === 'diary' ? <PrimaryButton onClick={() => openManualEntry('diary')}><Plus size={17} /> New Diary Entry</PrimaryButton> : null}
+          >
+            {emptyDescription}
+          </EmptyState>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (focus === 'overview') {
+    return (
+      <AppShell title="Dashboard">
+        <div className="dashboard-stack dashboard-overview">
+          {renderSyncMessage()}
+          {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
+
+          <section className="stat-grid dashboard-stat-grid" aria-label="Vault summary">
+            {stats.map((stat) => <StatCard key={stat.label} {...stat} />)}
+          </section>
+
+          <div className="dashboard-tab-row">
+            <SegmentedControl ariaLabel="Dashboard tabs" options={DASHBOARD_TABS} value={dashboardTab} onChange={setDashboardTab} />
+          </div>
+
+          {dashboardTab === 'my-work' ? (
+            <SectionPanel eyebrow="MY WORK" title="Recent entries" actions={<Badge>{myEntryPages.length} total</Badge>}>
+              {renderCompactPageRows(recent, 'No recent entries', 'Create or accept entries to build your working library.', { allowSelection: false })}
+            </SectionPanel>
+          ) : null}
+
+          {dashboardTab === 'discoveries' ? (
+            <SectionPanel eyebrow="SCRAPED ENTRIES" title="Discovery status summary" actions={<Badge>{discoveryPages.length} active</Badge>}>
+              <div className="discovery-status-grid summary-only">
+                {discoverySummary.map((item) => <article key={item.label}><span>{item.label}</span><strong>{item.value}</strong></article>)}
+              </div>
+              {discoveryMessage ? <p className="status-message">{discoveryMessage.includes('Could not') ? 'Discovery setup needs attention. Review Sources in Settings.' : discoveryMessage}</p> : null}
+              {renderCompactPageRows(dashboardDiscoveries, 'No scraped entries yet', 'Scraped records will appear here after the configured GitHub Actions workflow runs.', { allowSelection: false })}
+            </SectionPanel>
+          ) : null}
+
+          {dashboardTab === 'deadlines' ? (
+            <SectionPanel eyebrow="DEADLINES" title="Upcoming deadlines" actions={<Badge>{dashboardDeadlines.length} shown</Badge>}>
+              {renderDeadlineRows(dashboardDeadlines)}
+            </SectionPanel>
+          ) : null}
+
+          {dashboardTab === 'archived' ? (
+            <SectionPanel eyebrow="ARCHIVED" title="Recently archived" actions={<Badge>{archivedPages.length} total</Badge>}>
+              {renderCompactPageRows(dashboardArchived, 'No archived records', 'Archived manual and scraped entries are hidden from active views.', { allowSelection: false })}
+            </SectionPanel>
+          ) : null}
+        </div>
+        <ShareEntryDialog page={sharePage} open={Boolean(sharePage)} onClose={() => setSharePage(null)} />
+      </AppShell>
+    );
+  }
+
+  if (focus === 'deadlines') {
+    return (
+      <AppShell title="Upcoming Deadlines">
+        <div className="dashboard-stack">
+          {renderSyncMessage()}
+          {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
+          <SectionPanel eyebrow="DEADLINES" title="Upcoming deadlines" actions={<Badge>{deadlines.length} tracked</Badge>}>
+            {renderDeadlineRows(deadlines.filter((item) => !item.deadline?.completed).slice(0, 24))}
+          </SectionPanel>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title={focusLabel}>
       <div className="dashboard-stack">
-        {error ? <div className="alert-panel error"><strong>Library sync issue</strong><span>{error}</span></div> : null}
+        {renderSyncMessage()}
         {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
 
-        <SectionPanel className="dashboard-actions-panel discovery-control-centre" eyebrow="DISCOVERY" title="Discovery Control Centre" actions={(
-          <div className="control-centre-actions">
-            <NewEntryMenu onImportFromLink={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))} />
-            <SecondaryButton onClick={() => window.dispatchEvent(new CustomEvent('kv-open-import-link'))}><Link2 size={16} /> Scrape a Link</SecondaryButton>
-            <SecondaryButton onClick={() => runDiscovery('quick')}><RefreshCw size={16} /> Quick Refresh</SecondaryButton>
-            <PrimaryButton onClick={() => runDiscovery('full')}><RefreshCw size={16} /> Full Web Scan</PrimaryButton>
-            <SecondaryButton as="a" href={RESEARCH_DISCOVERY_WORKFLOW_URL} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open Research Discovery Workflow</SecondaryButton>
-            <label className="source-select-control"><span>Source</span><select value={selectedDiscoverySourceId} onChange={(event) => setSelectedDiscoverySourceId(event.target.value)} disabled={!enabledSources.length}>{enabledSources.map((source) => <option key={source.id} value={source.id}>{source.name || source.url}</option>)}</select></label>
-            <SecondaryButton disabled={!selectedDiscoverySourceId} onClick={scanSelectedSource}>Scan One Source</SecondaryButton>
-            <SecondaryButton as="a" href="#/settings">Manage Sources</SecondaryButton>
-            <SecondaryButton onClick={() => setRunLogOpen((value) => !value)}>View Run Log</SecondaryButton>
-          </div>
+        <SectionPanel eyebrow={libraryEyebrow} title={libraryTitle} actions={(
+          <>
+            <Badge>{filteredPages.length} shown</Badge>
+            {!isDiscoveryFocus && !isShareableFocus && focus !== 'archives' ? <PrimaryButton onClick={openContextEntry}><Plus size={17} /> {contextEntry.shortLabel || contextEntry.label}</PrimaryButton> : null}
+          </>
         )}>
-          <div className="alert-panel warning"><strong>Free discovery mode</strong><span>Instant scraping is disabled to keep the project free. Requests are processed by GitHub Actions.</span></div>
-          <p className="section-intro">Discovery coverage is based on enabled sources and queued Firestore requests.</p>
-          <div className="discovery-status-grid">
-            <article><span>Automatic Discovery</span><strong>{automaticDiscoveryLabel}</strong></article>
-            <article><span>Manual scanning</span><strong>Queue-based, no Firebase Functions</strong></article>
-            <article><span>Next scheduled scan</span><strong>{FIXED_DISCOVERY_SCHEDULE_LABEL}</strong></article>
-            <article><span>Last attempted scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastAttemptedScanAt || latestDiscoveryRun?.requestedAt || latestDiscoveryRun?.createdAt)}</strong></article>
-            <article><span>Last successful scan</span><strong>{formatDiscoveryTimestamp(discoveryStats?.lastSuccessfulScanAt)}</strong></article>
-            <article><span>Current activity</span><strong>{currentActivity}</strong></article>
-            <article><span>Sources enabled</span><strong>{enabledSourceCount}</strong></article>
-            <article><span>Sources checked</span><strong>{latestDiscoveryRun?.sourcesChecked ?? latestStats.sourcesChecked ?? discoveryStats?.sourcesChecked ?? 0}</strong></article>
-            <article><span>New discoveries</span><strong>{latestDiscoveryRun?.recordsCreated ?? latestStats.newRecords ?? discoveryStats?.newRecords ?? 0}</strong></article>
-            <article><span>Updated discoveries</span><strong>{latestDiscoveryRun?.recordsUpdated ?? latestStats.updatedRecords ?? discoveryStats?.updatedRecords ?? 0}</strong></article>
-            <article><span>Duplicates skipped</span><strong>{latestDiscoveryRun?.duplicatesSkipped ?? latestStats.duplicates ?? discoveryStats?.duplicatesSkipped ?? 0}</strong></article>
-            <article><span>Warnings</span><strong>{latestWarnings}</strong></article>
-            <article><span>Failed sources</span><strong>{latestDiscoveryRun?.failures ?? latestStats.failures ?? discoveryStats?.failures ?? 0}</strong></article>
-          </div>
-          {discoveryActive ? <p className="status-message">{latestDiscoveryRun?.runType === 'manual-full' ? 'Full web scan in progress' : 'Discovery scan in progress'}{latestDiscoveryRun?.currentSource ? ` - ${latestDiscoveryRun.currentStage || 'Checking'}: ${latestDiscoveryRun.currentSource}` : ` - ${discoveryStatusLabel}`}</p> : null}
-          {!discoveryActive && latestDiscoveryRun ? <p className="status-message">Latest run: {discoveryStatusLabel}</p> : null}
-          {discoveryMessage ? <p className={discoveryMessage.includes('Could not') || discoveryMessage.includes('No enabled') ? 'form-error' : 'status-message'}>{discoveryMessage}</p> : null}
-          {queuedLinkRequests.length ? (
-            <div className="request-status-list compact" aria-label="Queued link request status">
-              {queuedLinkRequests.map((request) => (
-                <article key={request.id}>
-                  <div><strong>{request.sourceUrl || request.url || request.title || 'Queued link'}</strong><span>{requestTypeLabel(request.type)} - {formatDiscoveryTimestamp(request.updatedAt || request.createdAt)}</span></div>
-                  <span className={`request-status ${request.status || 'queued'}`}>{requestStatusLabel(request.status)}</span>
-                </article>
-              ))}
-            </div>
-          ) : null}
-          {runLogOpen ? (
-            <div className="run-log-panel">
-              <dl>
-                <div><dt>Run record</dt><dd>{latestDiscoveryRun?.id ? `users/${user?.uid}/discoveryRuns/${latestDiscoveryRun.id}` : 'No run record yet'}</dd></div>
-                <div><dt>Run type</dt><dd>{latestDiscoveryRun?.runType || 'Not recorded'}</dd></div>
-                <div><dt>Status</dt><dd>{latestDiscoveryRun?.status || 'Idle'}</dd></div>
-                <div><dt>Stage</dt><dd>{latestDiscoveryRun?.currentStage || discoveryStatusLabel}</dd></div>
-                <div><dt>Records found</dt><dd>{latestDiscoveryRun?.recordsFound ?? latestStats.recordsFound ?? 0}</dd></div>
-                <div><dt>Dates detected</dt><dd>{latestDiscoveryRun?.datesDetected ?? latestStats.datesDetected ?? 0}</dd></div>
-              </dl>
-              {Array.isArray(latestDiscoveryRun?.warningMessages) && latestDiscoveryRun.warningMessages.length ? <ul>{latestDiscoveryRun.warningMessages.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
-            </div>
-          ) : null}
-          {focus !== 'overview' && focus !== 'notes' ? <button type="button" className="button secondary context-add-button" onClick={openContextEntry}>{contextEntry.shortLabel || contextEntry.label}</button> : null}
-        </SectionPanel>
-
-        {visibleReminders.length ? (
-          <SectionPanel className="reminder-panel" eyebrow="REMINDERS" title="Reminders" actions={<SecondaryButton onClick={enableBrowserNotifications}><Bell size={16} /> Enable browser reminders</SecondaryButton>}>
-            <p className="section-intro">Due and overdue items for this session.</p>
-            {notificationMessage ? <p className="small-note">{notificationMessage}</p> : null}
-            <div className="reminder-list">
-              {visibleReminders.slice(0, 5).map((item) => (
-                <article key={item.id} className={`reminder-row ${deadlineTone(item.status)}`}>
-                  <div>
-                    <strong>{item.page.title}</strong>
-                    <span>{item.kind} - {item.status}</span>
-                  </div>
-                  <a className="text-link" href={`#/read/${item.page.id}`}>Open</a>
-                  <button type="button" className="text-link" onClick={() => dismissReminder(item.id)}>Dismiss</button>
-                </article>
-              ))}
-            </div>
-          </SectionPanel>
-        ) : null}
-
-        <section className="stat-grid" aria-label="Library summary">
-          {stats.map((stat) => <StatCard key={stat.label} {...stat} />)}
-        </section>
-
-        <SectionPanel
-          className="deadline-panel"
-          eyebrow="DEADLINES"
-          title="Upcoming Deadlines"
-          actions={<PrimaryButton onClick={requestCalendarAdd}><Plus size={17} /> Add Deadline</PrimaryButton>}
-        >
-          <div className="deadline-filter-stack">
-            <SegmentedControl ariaLabel="Deadline category filters" options={deadlineScopeOptions} value={deadlineScopeFilter} onChange={setDeadlineScopeFilter} />
-            <SegmentedControl ariaLabel="Deadline time filters" className="compact" options={deadlineTimeOptions} value={deadlineTimeFilter} onChange={setDeadlineTimeFilter} />
-          </div>
-
-          {deadlineRows.length ? (
-            <div className="deadline-list" aria-label="Upcoming deadline list">
-              {deadlineRows.map((item) => (
-                <a key={item.id} className={`deadline-row ${deadlineTone(item.status)}`} href={`#/read/${item.page.id}`}>
-                  <span className="deadline-row-icon"><CalendarClock size={18} strokeWidth={1.8} /></span>
-                  <span className="deadline-row-main">
-                    <strong>{item.page.secure ? 'Locked note' : item.page.title}</strong>
-                    <small>{item.page.category || 'Uncategorised'} - {item.kind}</small>
-                  </span>
-                  <span className="deadline-row-date">{formatDetectedDate(item.deadline)}</span>
-                  <Badge tone={deadlineTone(item.status)}>{item.status}</Badge>
-                  <span className="deadline-row-days">{daysRemainingLabel(item.days)}</span>
-                  <ChevronRight size={18} aria-hidden="true" />
-                </a>
-              ))}
-            </div>
-          ) : null}
-
-          {noDeadlineRows.length ? (
-            <div className="deadline-list" aria-label="Entries without deadlines">
-              {noDeadlineRows.map((page) => (
-                <a key={page.id} className="deadline-row no-deadline" href={`#/read/${page.id}`}>
-                  <span className="deadline-row-icon"><FileText size={18} strokeWidth={1.8} /></span>
-                  <span className="deadline-row-main">
-                    <strong>{page.secure ? 'Locked note' : page.title}</strong>
-                    <small>{page.category || 'Uncategorised'}</small>
-                  </span>
-                  <span className="deadline-row-date">No deadline recorded</span>
-                  <Badge>No date</Badge>
-                  <span className="deadline-row-days">Add one</span>
-                  <ChevronRight size={18} aria-hidden="true" />
-                </a>
-              ))}
-            </div>
-          ) : null}
-
-          {!deadlineRows.length && !noDeadlineRows.length ? (
-            <EmptyState
-              icon={CalendarClock}
-              title="No upcoming deadlines"
-              actions={(
-                <>
-                  <SecondaryButton as="a" href="#/edit/new"><Link2 size={16} /> Import Opportunity</SecondaryButton>
-                  <PrimaryButton onClick={requestCalendarAdd}><Plus size={17} /> Add Manually</PrimaryButton>
-                </>
-              )}
-            >
-              Import a scholarship, postdoctoral opening, conference call or journal opportunity to begin tracking important dates.
-            </EmptyState>
-          ) : null}
-        </SectionPanel>
-
-        <section className="workspace-section" aria-labelledby="workspace-title">
-          <div className="section-title-row">
-            <div>
-              <p className="eyebrow">RESEARCH WORKSPACE</p>
-              <h2 id="workspace-title">Research Workspace</h2>
-            </div>
-          </div>
-          <div className="workspace-card-grid">
-            {WORKSPACE_CARDS.map((card) => <WorkspaceCard key={card.key} {...card} title={card.label} count={workspaceCounts.get(card.key) || 0} />)}
-          </div>
-        </section>
-
-        <SectionPanel eyebrow={libraryEyebrow} title={libraryTitle} actions={<Badge>{filteredPages.length} shown</Badge>}>
           {focus === 'notes' ? (
             <div className="section-filter-stack">
               <SegmentedControl ariaLabel="All Notes view" options={ALL_NOTES_VIEW_OPTIONS} value={allNotesView} onChange={setAllNotesView} />
@@ -889,18 +946,15 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           ) : null}
           {focus === 'my-entries' ? (
             <div className="section-filter-row">
-              <label className="select-control"><span>Origin</span><select value={myOriginFilter} onChange={(event) => setMyOriginFilter(event.target.value)}>{ORIGIN_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               <label className="select-control"><span>Type</span><select value={myTypeFilter} onChange={(event) => setMyTypeFilter(event.target.value)}>{MY_ENTRY_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <label className="select-control"><span>Status</span><select value={myStatusFilter} onChange={(event) => setMyStatusFilter(event.target.value)}><option value="active">Active</option><option value="archived">Archived</option></select></label>
             </div>
           ) : null}
           {focus === 'archives' ? (
             <div className="section-filter-stack">
               <SegmentedControl ariaLabel="Archive tabs" options={ARCHIVE_TABS} value={archiveTab} onChange={setArchiveTab} />
               <div className="section-filter-row">
-                <label className="select-control"><span>Origin</span><select value={archiveOriginFilter} onChange={(event) => setArchiveOriginFilter(event.target.value)}>{ORIGIN_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                 <label className="select-control"><span>Type</span><select value={archiveTypeFilter} onChange={(event) => setArchiveTypeFilter(event.target.value)}>{MY_ENTRY_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                <label className="select-control"><span>Has deadline</span><select value={archiveHasDeadline} onChange={(event) => setArchiveHasDeadline(event.target.value)}><option value="all">All</option><option value="yes">Has deadline</option><option value="no">No deadline</option></select></label>
+                <label className="select-control"><span>Deadline</span><select value={archiveHasDeadline} onChange={(event) => setArchiveHasDeadline(event.target.value)}><option value="all">All</option><option value="yes">Has deadline</option><option value="no">No deadline</option></select></label>
               </div>
             </div>
           ) : null}
@@ -931,105 +985,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
             onViewChange={setViewMode}
           />
           {filterValue !== 'all' ? <p className="active-filter-note">Active filter: {filterLabel(filterValue)}</p> : null}
-
-          <div className={`note-library ${viewMode === 'list' ? 'is-list' : 'is-grid'}`}>
-            {filteredPages.map((page) => {
-              const normalizedPage = normalizePage(page);
-              const deadline = primaryDates.get(normalizedPage.id);
-              const preview = normalizedPage.secure ? 'Encrypted note. Unlock it to read the contents.' : (normalizedPage.summary || normalizedPage.plainText || 'No summary yet.').slice(0, 180);
-              const attachmentCount = (normalizedPage.attachments || []).length + (normalizedPage.inlineFiles || []).length;
-              const pinned = pinnedIds.has(normalizedPage.id);
-              const archived = isArchivedPage(normalizedPage);
-              const discovery = isDiscoveryRecord(normalizedPage);
-              const ownedEntry = isMyEntry(normalizedPage);
-              const selected = selectedPageIds.has(normalizedPage.id);
-              return (
-                <article key={normalizedPage.id} className={`note-card ${normalizedPage.secure ? 'secure-note' : ''} ${archived ? 'is-archived' : ''}`}>
-                  <label className="card-select-control" aria-label={`Select ${normalizedPage.title || 'entry'}`}>
-                    <input type="checkbox" checked={selected} onChange={() => toggleSelect(normalizedPage.id)} />
-                    <span>Select</span>
-                  </label>
-                  <div className="note-card-head">
-                    <span className="category-pill">{normalizedPage.secure ? 'Private Vault' : normalizedPage.category || 'Uncategorised'}</span>
-                    <div className="note-meta-row">
-                      {pinned ? <Badge tone="pin">Pinned</Badge> : null}
-                      <Badge tone={originTone(normalizedPage.origin)}>{originLabel(normalizedPage.origin)}</Badge>
-                      <Badge tone="neutral">{entryTypeLabel(entryTypeForPage(normalizedPage))}</Badge>
-                      {archived ? <Badge tone="neutral">Archived</Badge> : null}
-                      {normalizedPage.visibility === 'share-link' ? <Badge tone="completed">Shared</Badge> : null}
-                      {deadline ? <Badge tone={deadlineTone(deadline.status)}>{deadline.status}</Badge> : null}
-                    </div>
-                  </div>
-                  <h3>{normalizedPage.secure ? 'Locked note' : normalizedPage.title}</h3>
-                  <p>{preview}</p>
-                  <div className="tag-row">
-                    {(normalizedPage.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}
-                    {attachmentCount ? <span><Paperclip size={12} /> {attachmentCount} file(s)</span> : null}
-                  </div>
-                  {discovery ? (
-                    <div className="note-discovery-meta">
-                      <span>Source: {normalizedPage.discovery?.sourceName || normalizedPage.sourceDomain || 'Official source'}</span>
-                      <span>First discovered: {formatDiscoveryTimestamp(normalizedPage.discovery?.firstDiscoveredAt)}</span>
-                      <span>Last checked: {formatDiscoveryTimestamp(normalizedPage.discovery?.lastCheckedAt)}</span>
-                      <span>Relevance: {Math.round((normalizedPage.discovery?.relevanceScore || 0) * 100)}%</span>
-                      <span>Date confidence: {Math.round((normalizedPage.discovery?.dateConfidence || 0) * 100)}%</span>
-                      <span>Status: {normalizedPage.discovery?.status || 'active'}</span>
-                    </div>
-                  ) : null}
-                  {deadline ? (
-                    <div className="note-next-date">
-                      <CalendarClock size={15} />
-                      <span><strong>Next important date</strong>{deadline.kind} - {formatDetectedDate(deadline.deadline)}</span>
-                      <small>{daysRemainingLabel(deadline.days)}</small>
-                    </div>
-                  ) : <div className="note-next-date subtle"><span>No deadline recorded</span></div>}
-                  <div className="note-card-foot">
-                    <small>Updated {formatDate(normalizedPage.updatedAt)}</small>
-                    <div className="note-actions">
-                      <NoteAction icon={Eye} onClick={() => window.location.hash = `#/read/${normalizedPage.id}`}>Open</NoteAction>
-                      {ownedEntry ? <NoteAction icon={Edit3} onClick={() => window.location.hash = `#/edit/${normalizedPage.id}`}>Edit</NoteAction> : null}
-                      {ownedEntry ? <NoteAction icon={Share2} onClick={() => setSharePage(normalizedPage)}>Share</NoteAction> : null}
-                      {ownedEntry ? <NoteAction icon={Pin} onClick={() => togglePin(normalizedPage)}>{pinned ? 'Unpin' : 'Pin'}</NoteAction> : null}
-                      {ownedEntry ? <NoteAction icon={Copy} onClick={() => duplicatePage(normalizedPage)}>Duplicate</NoteAction> : null}
-                      {discovery ? <NoteAction icon={CheckCircle2} onClick={() => saveDiscoveryToMyEntries(normalizedPage)}>Save to My Entries</NoteAction> : null}
-                      {discovery ? <NoteAction icon={ClipboardCheck} onClick={() => startApplicationFromPage(normalizedPage)}>Start Application</NoteAction> : null}
-                      {discovery ? <NoteAction icon={Pin} onClick={() => followDiscovery(normalizedPage)}>Follow</NoteAction> : null}
-                      {discovery ? <NoteAction icon={XCircle} onClick={() => dismissDiscovery(normalizedPage)}>Dismiss</NoteAction> : null}
-                      {normalizedPage.sourceUrl ? <NoteAction icon={ExternalLink} onClick={() => window.open(normalizedPage.sourceUrl, '_blank', 'noopener,noreferrer')}>Open Source</NoteAction> : null}
-                      <NoteAction icon={Archive} onClick={() => toggleArchive(normalizedPage)}>{archived ? 'Restore' : 'Archive'}</NoteAction>
-                      <NoteAction icon={Trash2} danger onClick={() => deletePage(normalizedPage)}>Delete</NoteAction>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-            {!filteredPages.length ? (
-              <EmptyState
-                icon={Grid2X2}
-                title={emptyTitle}
-                actions={focus === 'archives' ? null : focus === 'diary' ? <PrimaryButton onClick={() => openManualEntry('diary')}><Plus size={17} /> New Diary Entry</PrimaryButton> : <PrimaryButton as="a" href="#/edit/new"><Plus size={17} /> New Entry</PrimaryButton>}
-              >
-                {emptyDescription}
-              </EmptyState>
-            ) : null}
-          </div>
-        </SectionPanel>
-
-        <SectionPanel eyebrow="RECENT ACTIVITY" title="Recently Updated">
-          <div className="recent-list">
-            {recent.map((page) => (
-              <a key={page.id} className="recent-row" href={`#/read/${page.id}`}>
-                <span className="recent-icon"><FileText size={18} strokeWidth={1.8} /></span>
-                <div>
-                  <strong>{page.secure ? 'Locked note' : page.title}</strong>
-                  <span>{page.category || 'Uncategorised'}</span>
-                </div>
-                <small>{formatDate(page.updatedAt)}</small>
-                <ChevronRight size={18} aria-hidden="true" />
-              </a>
-            ))}
-            {!recent.length ? <EmptyState icon={FileText} title="No recent entries" compact /> : null}
-          </div>
+          {renderCompactPageRows(filteredPages, emptyTitle, emptyDescription)}
         </SectionPanel>
       </div>
       <ShareEntryDialog page={sharePage} open={Boolean(sharePage)} onClose={() => setSharePage(null)} />

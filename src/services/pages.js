@@ -1,10 +1,17 @@
 import { db, firebaseNamespace } from '../firebase';
+import { extractWikiLinks, htmlToText } from '../utils/content';
 import {
+  MAIN_ENTRY_PAGE_ID,
   archivePatch,
   buildOriginMigrationPatch,
+  createEntryPage,
+  entryPagesToHtml,
+  getEntryPages,
+  getMainPage,
   normalizePage,
   normalizePageForSave,
   normalizePagePatch,
+  prepareEntryPagesForSave,
   unarchivePatch,
 } from '../utils/pageModel';
 
@@ -23,6 +30,26 @@ class FirestoreWriteTimeoutError extends Error {
 function pagesCollection(uid) {
   if (!db) throw new Error('Firebase is not configured.');
   return db.collection('users').doc(uid).collection('pages');
+}
+
+async function getEntryDocument(uid, entryId) {
+  const ref = pagesCollection(uid).doc(entryId);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new Error('Entry not found.');
+  return { ref, entry: { id: snapshot.id, ...snapshot.data() } };
+}
+
+function buildEntryPagesPayload(entry, pages, now = new Date().toISOString()) {
+  const nextPages = prepareEntryPagesForSave(pages, { entry, now });
+  const mainPage = getMainPage({ ...entry, pages: nextPages });
+  const plainText = htmlToText(entryPagesToHtml(nextPages));
+  return {
+    pages: nextPages,
+    html: mainPage?.content || '<p></p>',
+    content: mainPage?.content || '<p></p>',
+    plainText,
+    wikiLinks: extractWikiLinks(plainText),
+  };
 }
 
 function hasFullPageShape(data = {}) {
@@ -107,6 +134,54 @@ export async function savePage(uid, pageId, data, isNew = false) {
   await withFirestoreWriteTimeout(
     pagesCollection(uid).doc(pageId).set(buildPagePayload(data, isNew), { merge: true }),
   );
+}
+
+export async function updateEntryPage(uid, entryId, entryPageId, patch = {}) {
+  const { entry } = await getEntryDocument(uid, entryId);
+  const now = new Date().toISOString();
+  let matched = false;
+  const nextPages = getEntryPages(entry).map((page) => {
+    if (page.pageId !== entryPageId) return page;
+    matched = true;
+    const { pageId: ignoredPageId, order: ignoredOrder, ...safePatch } = patch;
+    return {
+      ...page,
+      ...safePatch,
+      pageId: page.pageId,
+      order: page.order,
+      updatedAt: now,
+    };
+  });
+  if (!matched) throw new Error('Entry page not found.');
+  await savePage(uid, entryId, buildEntryPagesPayload(entry, nextPages, now), false);
+}
+
+export async function addEntryPage(uid, entryId, title = '') {
+  const { entry } = await getEntryDocument(uid, entryId);
+  const pages = getEntryPages(entry);
+  const nextPage = createEntryPage(title || `Page ${pages.length + 1}`, pages.length);
+  await savePage(uid, entryId, buildEntryPagesPayload(entry, [...pages, nextPage], nextPage.createdAt), false);
+  return nextPage;
+}
+
+export async function deleteEntryPage(uid, entryId, entryPageId) {
+  const { entry } = await getEntryDocument(uid, entryId);
+  const pages = getEntryPages(entry);
+  if (pages.length <= 1) throw new Error('An entry must keep at least one page.');
+  if (entryPageId === MAIN_ENTRY_PAGE_ID) throw new Error('The main page cannot be deleted.');
+  const nextPages = pages.filter((page) => page.pageId !== entryPageId);
+  if (nextPages.length === pages.length) throw new Error('Entry page not found.');
+  await savePage(uid, entryId, buildEntryPagesPayload(entry, nextPages), false);
+}
+
+export async function reorderEntryPages(uid, entryId, orderedPageIds = []) {
+  const { entry } = await getEntryDocument(uid, entryId);
+  const pages = getEntryPages(entry);
+  const byId = new Map(pages.map((page) => [page.pageId, page]));
+  const ordered = orderedPageIds.map((pageId) => byId.get(pageId)).filter(Boolean);
+  const missing = pages.filter((page) => !orderedPageIds.includes(page.pageId));
+  const nextPages = [...ordered, ...missing].map((page, index) => ({ ...page, order: index, updatedAt: new Date().toISOString() }));
+  await savePage(uid, entryId, buildEntryPagesPayload(entry, nextPages), false);
 }
 
 export async function archivePage(uid, pageId, reason = 'Archived by user') {

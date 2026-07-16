@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import ShareEntryDialog from '../components/ShareEntryDialog';
 import BookReader from '../components/BookReader';
@@ -19,7 +20,7 @@ import { daysUntil, deadlineStatus } from '../utils/intelligence';
 import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { formatDetectedDate } from '../utils/dates';
 import { formatDiscoveryTimestamp } from '../services/discovery';
-import { isArchivedPage, isDiscoveryRecord, isMyEntry, normalizePage, originLabel, originTone, savedDiscoveryPatch } from '../utils/pageModel';
+import { getEntryPages, isArchivedPage, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, originLabel, originTone, savedDiscoveryPatch } from '../utils/pageModel';
 
 function deadlineLabel(deadline) {
   const status = deadlineStatus(deadline);
@@ -48,11 +49,16 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('kv-reader-mode') || 'scroll');
   const [preview, setPreview] = useState(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [selectedEntryPageId, setSelectedEntryPageId] = useState('main');
 
   const content = page?.secure ? decrypted : normalizedPage;
+  const entryPages = useMemo(() => (content ? getEntryPages(content) : []), [content]);
+  const entryPageKey = useMemo(() => entryPages.map((entryPage) => entryPage.pageId).join('|'), [entryPages]);
+  const selectedEntryPage = entryPages.find((entryPage) => entryPage.pageId === selectedEntryPageId) || entryPages[0];
+  const selectedEntryPageIndex = Math.max(0, entryPages.findIndex((entryPage) => entryPage.pageId === selectedEntryPage?.pageId));
   const renderedHtml = useMemo(
-    () => (content ? linkifyWikiHtml(content.html || '', pages) : ''),
-    [content, pages],
+    () => (selectedEntryPage ? linkifyWikiHtml(selectedEntryPage.content || '', pages) : ''),
+    [pages, selectedEntryPage],
   );
 
   const backlinks = useMemo(() => {
@@ -69,6 +75,11 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
     () => pdfs.filter((pdf) => (pdf.relatedPageIds || []).includes(pageId)),
     [pdfs, pageId],
   );
+
+  useEffect(() => {
+    if (!entryPages.length) return;
+    if (!entryPages.some((entryPage) => entryPage.pageId === selectedEntryPageId)) setSelectedEntryPageId(entryPages[0].pageId);
+  }, [entryPageKey, entryPages, selectedEntryPageId]);
 
   useEffect(() => {
     if (!preview?.url) return undefined;
@@ -197,7 +208,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
               <span>{content.category || 'Uncategorised'}</span>
               <span className={`origin-badge badge-${originTone(normalizedPage?.origin || content.origin)}`}>{originLabel(normalizedPage?.origin || content.origin)}</span>
               {isArchivedPage(normalizedPage) ? <span>Archived</span> : null}
-              {normalizedPage?.visibility === 'share-link' ? <span>Shared</span> : null}
+              {isShareEnabledPage(normalizedPage) ? <span>Shareable</span> : null}
               {page.secure ? <span>Decrypted for this session</span> : null}
             </div>
             <h2>{content.title}</h2>
@@ -206,7 +217,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           </div>
           <div className="reader-actions">
             {isMyEntry(normalizedPage) ? <a className="button secondary" href={`#/edit/${page.id}`}>Edit</a> : null}
-            {isMyEntry(normalizedPage) ? <button className="button secondary" type="button" onClick={() => setShareOpen(true)}>Share</button> : null}
+            {isMyEntry(normalizedPage) ? <button className="button secondary" type="button" onClick={() => setShareOpen(true)}>{isShareEnabledPage(normalizedPage) ? 'Share link' : 'Make shareable'}</button> : null}
             {isDiscoveryRecord(normalizedPage) ? <button className="button secondary" type="button" onClick={saveDiscoveryToMyEntries}>Save to My Entries</button> : null}
             {isDiscoveryRecord(normalizedPage) ? <button className="button secondary" type="button" onClick={startApplication}>Start Application</button> : null}
             <button className="button secondary" type="button" onClick={toggleArchive}>{isArchivedPage(normalizedPage) ? 'Restore' : 'Archive'}</button>
@@ -239,15 +250,45 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
           )}
         </section>
 
+        {entryPages.length ? (
+          <section className="reader-page-nav" aria-label="Entry page navigation">
+            <nav className="reader-page-tabs">
+              {entryPages.map((entryPage, index) => (
+                <button
+                  type="button"
+                  key={entryPage.pageId}
+                  className={entryPage.pageId === selectedEntryPage?.pageId ? 'is-active' : ''}
+                  onClick={() => setSelectedEntryPageId(entryPage.pageId)}
+                >
+                  <span>{entryPage.pageId === 'main' ? 'Main Page' : `Page ${index + 1}`}</span>
+                  <strong>{entryPage.title || `Page ${index + 1}`}</strong>
+                </button>
+              ))}
+            </nav>
+            <div className="reader-page-stepper">
+              <button type="button" className="button secondary" disabled={selectedEntryPageIndex <= 0} onClick={() => setSelectedEntryPageId(entryPages[selectedEntryPageIndex - 1]?.pageId)}><ChevronLeft size={16} /> Previous page</button>
+              <span>{selectedEntryPageIndex + 1} / {entryPages.length}</span>
+              <button type="button" className="button secondary" disabled={selectedEntryPageIndex >= entryPages.length - 1} onClick={() => setSelectedEntryPageId(entryPages[selectedEntryPageIndex + 1]?.pageId)}>Next page <ChevronRight size={16} /></button>
+            </div>
+          </section>
+        ) : null}
+
         <div className="view-switch" role="group" aria-label="Reading mode">
           <button className={viewMode === 'scroll' ? 'active' : ''} onClick={() => changeView('scroll')}>Scroll view</button>
           <button className={viewMode === 'book' ? 'active' : ''} onClick={() => changeView('book')}>Book view</button>
         </div>
 
+        {selectedEntryPage ? (
+          <section className="reader-page-title">
+            <p className="eyebrow">PAGE {selectedEntryPageIndex + 1}</p>
+            <h3>{selectedEntryPage.title || `Page ${selectedEntryPageIndex + 1}`}</h3>
+          </section>
+        ) : null}
+
         {viewMode === 'scroll' ? (
           <section className="scroll-reader reader-prose" dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderedHtml) }} />
         ) : (
-          <BookReader title={content.title} html={renderedHtml} />
+          <BookReader title={`${content.title} - ${selectedEntryPage?.title || 'Page'}`} html={renderedHtml} />
         )}
 
         {renderImportantDates()}

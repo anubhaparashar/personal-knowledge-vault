@@ -1,4 +1,5 @@
 import { sanitizeHtml, timestampToDate } from './content';
+import { entryPagesToHtml, getEntryPages } from './pageModel';
 
 function downloadBlob(contents, fileName, type) {
   const blob = new Blob([contents], { type });
@@ -26,7 +27,8 @@ function normalizeTimestamps(record) {
 
 export function downloadPageAsHtml(page, resolvedContent) {
   const title = resolvedContent.title || page.title || 'Knowledge page';
-  const html = sanitizeHtml(resolvedContent.html || '');
+  const pages = getEntryPages(resolvedContent || page);
+  const html = sanitizeHtml(entryPagesToHtml(pages));
   const documentHtml = `<!doctype html>
 <html lang="en">
 <head>

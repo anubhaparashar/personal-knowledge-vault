@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { getPublicShare } from '../services/publicShares';
 import { formatDate, sanitizeHtml } from '../utils/content';
 import { formatDetectedDate } from '../utils/dates';
+import { getEntryPages } from '../utils/pageModel';
 
 export default function PublicSharePage({ shareId }) {
   const [share, setShare] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedEntryPageId, setSelectedEntryPageId] = useState('main');
+  const entryPages = useMemo(() => (share ? getEntryPages(share) : []), [share]);
+  const selectedEntryPage = entryPages.find((page) => page.pageId === selectedEntryPageId) || entryPages[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -26,6 +30,10 @@ export default function PublicSharePage({ shareId }) {
     return () => { cancelled = true; };
   }, [shareId]);
 
+  useEffect(() => {
+    if (entryPages.length && !entryPages.some((page) => page.pageId === selectedEntryPageId)) setSelectedEntryPageId(entryPages[0].pageId);
+  }, [entryPages, selectedEntryPageId]);
+
   if (loading) return <main className="public-share-page"><section className="public-share-card"><p>Loading shared entry...</p></section></main>;
   if (error || !share) return <main className="public-share-page"><section className="public-share-card"><h1>This shared link is no longer available.</h1></section></main>;
 
@@ -40,7 +48,24 @@ export default function PublicSharePage({ shareId }) {
         </header>
 
         {share.summary ? <p className="public-share-summary">{share.summary}</p> : null}
-        {share.html ? <section className="reader-prose" dangerouslySetInnerHTML={{ __html: sanitizeHtml(share.html) }} /> : null}
+        {entryPages.length ? (
+          <section className="public-share-page-nav" aria-label="Shared entry pages">
+            <div className="reader-page-tabs">
+              {entryPages.map((entryPage, index) => (
+                <button
+                  type="button"
+                  key={entryPage.pageId}
+                  className={entryPage.pageId === selectedEntryPage?.pageId ? 'is-active' : ''}
+                  onClick={() => setSelectedEntryPageId(entryPage.pageId)}
+                >
+                  <span>{entryPage.pageId === 'main' ? 'Main Page' : `Page ${index + 1}`}</span>
+                  <strong>{entryPage.title || `Page ${index + 1}`}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {selectedEntryPage ? <section className="reader-prose" dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedEntryPage.content || '') }} /> : null}
 
         {share.importantDates?.length ? (
           <section className="public-share-section">

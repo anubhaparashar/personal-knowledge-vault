@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import { Icon } from '../components/Branding';
 import PdfViewer from '../components/PdfViewer';
@@ -39,6 +40,15 @@ import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { DATE_ANALYSIS_VERSION, deduplicateDates, formatDetectedDate, migrateLegacyPageDates } from '../utils/dates';
 import { detectExternalUrls, readAutoEnrichPastedLinksMode } from '../utils/sourceLinks';
 import { categoryEntryType, PRELOAD_KEY as EDITOR_PRELOAD_KEY } from '../utils/manualEntry';
+import {
+  MAIN_ENTRY_PAGE_ID,
+  createEntryPage,
+  entryPagesToHtml,
+  getEntryPages,
+  getMainPage,
+  prepareEntryPagesForSave,
+  SOURCE_TYPES,
+} from '../utils/pageModel';
 import {
   CATEGORY_OPTIONS,
   deadlineStatus,
@@ -288,7 +298,8 @@ function hasOpportunityDetails(details = {}) {
   return Object.values(details || {}).some((value) => String(value || '').trim());
 }
 
-function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}) {
+function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}, entryPages = []) {
+  const pagesText = entryPages.length ? htmlToText(entryPagesToHtml(entryPages)) : '';
   return Boolean(
     form.title.trim()
     || form.category.trim()
@@ -296,12 +307,35 @@ function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceM
     || form.sourceUrl.trim()
     || form.summary.trim()
     || htmlToText(form.html).trim()
+    || pagesText.trim()
     || attachments.length
     || inlineFiles.length
     || importantDates.length
     || hasSourceMetadata(sourceMetadata)
     || hasOpportunityDetails(opportunityDetails),
   );
+}
+
+function pagesFromEntrySource(entry = {}, fallbackHtml = '<p></p>') {
+  return getEntryPages({
+    ...entry,
+    html: entry.html || fallbackHtml,
+    content: entry.content ?? entry.html ?? fallbackHtml,
+  });
+}
+
+function syncCurrentPageContent(pages = [], selectedPageId = MAIN_ENTRY_PAGE_ID, html = '<p></p>', updatedAt = new Date().toISOString()) {
+  const normalized = getEntryPages({ pages });
+  return normalized.map((page) => (
+    page.pageId === selectedPageId ? { ...page, content: html || '<p></p>', updatedAt } : page
+  ));
+}
+
+function sanitizeEntryPages(pages = [], entry = {}) {
+  return prepareEntryPagesForSave(pages, { entry }).map((page) => ({
+    ...page,
+    content: sanitizeHtml(page.content || '<p></p>'),
+  }));
 }
 
 function formatBytes(bytes) {
@@ -421,6 +455,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const draftKey = useMemo(() => getDraftStorageKey(user.uid, pageId), [pageId, user.uid]);
   const existing = pages.find((page) => page.id === routeId);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [entryPages, setEntryPages] = useState(() => pagesFromEntrySource({ html: EMPTY_FORM.html }));
+  const [selectedEntryPageId, setSelectedEntryPageId] = useState(MAIN_ENTRY_PAGE_ID);
   const [sourceMetadata, setSourceMetadata] = useState(EMPTY_SOURCE_METADATA);
   const [sourceEnrichment, setSourceEnrichment] = useState(EMPTY_SOURCE_ENRICHMENT);
   const [sourceImportPreview, setSourceImportPreview] = useState(null);
@@ -459,6 +495,12 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [draftSavedAt, setDraftSavedAt] = useState(null);
   const [hasLocalChanges, setHasLocalChanges] = useState(false);
   const [editorRevision, setEditorRevision] = useState(0);
+  const selectedEntryPage = useMemo(() => (
+    entryPages.find((page) => page.pageId === selectedEntryPageId) || entryPages[0] || pagesFromEntrySource({ html: form.html })[0]
+  ), [entryPages, form.html, selectedEntryPageId]);
+  const selectedEntryPageIndex = useMemo(() => (
+    Math.max(0, entryPages.findIndex((page) => page.pageId === selectedEntryPage?.pageId))
+  ), [entryPages, selectedEntryPage?.pageId]);
 
   useEffect(() => {
     function updateConnectionStatus() {
@@ -501,6 +543,12 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           return null;
         }
       })();
+      const preloadPages = pagesFromEntrySource(
+        Array.isArray(preload?.pages) && preload.pages.length ? { pages: preload.pages, html: preload?.html || '<p></p>' } : { html: preload?.html || '<p></p>' },
+      );
+      const firstPage = preloadPages[0];
+      setEntryPages(preloadPages);
+      setSelectedEntryPageId(firstPage?.pageId || MAIN_ENTRY_PAGE_ID);
       setForm({
         ...EMPTY_FORM,
         title: preload?.title || '',
@@ -508,7 +556,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         tagsText: preload?.tagsText || '',
         sourceUrl: preload?.sourceUrl || '',
         summary: cleanVisibleText(preload?.summary || ''),
-        html: preload?.html || '<p></p>',
+        html: firstPage?.content || preload?.html || '<p></p>',
       });
       setSourceMetadata(preload?.sourceMetadata || EMPTY_SOURCE_METADATA);
       setSourceEnrichment(sourceEnrichmentFromMetadata(preload?.sourceMetadata || EMPTY_SOURCE_METADATA, preload?.sourceUrl || ''));
@@ -549,6 +597,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setCategoryManuallyEdited(false);
     if (existing.secure) {
       setUnlocked(false);
+      setEntryPages(pagesFromEntrySource({ html: '<p></p>' }));
+      setSelectedEntryPageId(MAIN_ENTRY_PAGE_ID);
       setForm(EMPTY_FORM);
       setSourceMetadata(EMPTY_SOURCE_METADATA);
       setSourceEnrichment(EMPTY_SOURCE_ENRICHMENT);
@@ -562,13 +612,17 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setEditorRevision((current) => current + 1);
     } else {
       setUnlocked(true);
+      const existingPages = pagesFromEntrySource(existing, existing.html || '<p></p>');
+      const firstPage = existingPages[0];
+      setEntryPages(existingPages);
+      setSelectedEntryPageId(firstPage?.pageId || MAIN_ENTRY_PAGE_ID);
       setForm({
         title: existing.title || '',
         category: existing.category || '',
         tagsText: (existing.tags || []).join(', '),
         sourceUrl: existing.sourceUrl || '',
         summary: cleanVisibleText(existing.summary || ''),
-        html: existing.html || '<p></p>',
+        html: firstPage?.content || existing.html || '<p></p>',
       });
       setSourceMetadata(existing.sourceMetadata || EMPTY_SOURCE_METADATA);
       setSourceEnrichment(sourceEnrichmentFromMetadata(existing.sourceMetadata || EMPTY_SOURCE_METADATA, existing.sourceUrl || ''));
@@ -596,7 +650,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     if (!draftAutosaveReady || !hasLocalChanges) return undefined;
 
     const timeoutId = window.setTimeout(() => {
-      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails)) {
+      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails, entryPages)) {
         clearStoredDraft(draftKey);
         setDraftSavedAt(null);
         return;
@@ -609,6 +663,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         routeId,
         secure,
         form,
+        entryPages,
+        selectedEntryPageId,
         attachments,
         inlineFiles,
         importantDates,
@@ -622,7 +678,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }, DRAFT_SAVE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, form, hasLocalChanges, importantDates, inlineFiles, opportunityDetails, pageId, recordOrigin, routeId, secure, sourceMetadata]);
+  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, entryPages, form, hasLocalChanges, importantDates, inlineFiles, opportunityDetails, pageId, recordOrigin, routeId, secure, selectedEntryPageId, sourceMetadata]);
 
   useEffect(() => {
     if (!unlocked || !hasLocalChanges) return undefined;
@@ -706,6 +762,18 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }, 450);
     return () => window.clearTimeout(timeoutId);
   }, [form.html, form.sourceUrl, importing, secure, unlocked]);
+
+  useEffect(() => {
+    if (!selectedEntryPageId) return;
+    setEntryPages((current) => {
+      const selected = current.find((page) => page.pageId === selectedEntryPageId);
+      if (!selected || selected.content === form.html) return current;
+      return current.map((page) => (
+        page.pageId === selectedEntryPageId ? { ...page, content: form.html || '<p></p>', updatedAt: new Date().toISOString() } : page
+      ));
+    });
+  }, [form.html, selectedEntryPageId]);
+
   const attachmentRows = useMemo(() => {
     const queuedKeys = new Set(uploadRows.map((row) => attachmentFileKey(row)).filter(Boolean));
     const storedRows = attachments
@@ -749,10 +817,14 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       routeId,
       secure,
       form,
+      entryPages,
+      selectedEntryPageId,
       attachments,
       inlineFiles,
       importantDates,
       sourceMetadata,
+      opportunityDetails,
+      recordOrigin,
       categoryManuallyEdited,
       savedAt,
     });
@@ -767,6 +839,67 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     markDirty();
     setForm((current) => ({ ...current, [name]: value }));
   };
+
+  function currentEntryPagesSnapshot() {
+    return syncCurrentPageContent(entryPages, selectedEntryPageId, form.html);
+  }
+
+  function selectEntryPage(pageId) {
+    if (pageId === selectedEntryPageId) return;
+    const nextPages = currentEntryPagesSnapshot();
+    const nextPage = nextPages.find((page) => page.pageId === pageId) || nextPages[0];
+    if (!nextPage) return;
+    setEntryPages(nextPages);
+    setSelectedEntryPageId(nextPage.pageId);
+    setForm((current) => ({ ...current, html: nextPage.content || '<p></p>' }));
+    setEditorRevision((current) => current + 1);
+  }
+
+  function addEntryPageToDraft() {
+    const currentPages = currentEntryPagesSnapshot();
+    const nextPage = createEntryPage(`Page ${currentPages.length + 1}`, currentPages.length);
+    setEntryPages([...currentPages, nextPage]);
+    setSelectedEntryPageId(nextPage.pageId);
+    setForm((current) => ({ ...current, html: nextPage.content }));
+    setEditorRevision((current) => current + 1);
+    markDirty();
+  }
+
+  function updateSelectedEntryPageTitle(value) {
+    markDirty();
+    setEntryPages((current) => current.map((page) => (
+      page.pageId === selectedEntryPage?.pageId ? { ...page, title: value, updatedAt: new Date().toISOString() } : page
+    )));
+  }
+
+  function deleteSelectedEntryPage() {
+    if (!selectedEntryPage || entryPages.length <= 1) return;
+    if (selectedEntryPage.pageId === MAIN_ENTRY_PAGE_ID) {
+      window.alert('The main page cannot be deleted. Rename or clear it instead.');
+      return;
+    }
+    if (!window.confirm(`Delete "${selectedEntryPage.title || 'this page'}" from this entry?`)) return;
+    const currentPages = currentEntryPagesSnapshot();
+    const filtered = currentPages.filter((page) => page.pageId !== selectedEntryPage.pageId).map((page, index) => ({ ...page, order: index }));
+    const nextPage = filtered[Math.max(0, selectedEntryPageIndex - 1)] || filtered[0];
+    setEntryPages(filtered);
+    setSelectedEntryPageId(nextPage?.pageId || MAIN_ENTRY_PAGE_ID);
+    setForm((current) => ({ ...current, html: nextPage?.content || '<p></p>' }));
+    setEditorRevision((current) => current + 1);
+    markDirty();
+  }
+
+  function moveSelectedEntryPage(direction) {
+    const currentPages = currentEntryPagesSnapshot();
+    const index = currentPages.findIndex((page) => page.pageId === selectedEntryPage?.pageId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= currentPages.length) return;
+    const reordered = [...currentPages];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
+    setEntryPages(reordered.map((page, order) => ({ ...page, order, updatedAt: page.pageId === moved.pageId ? new Date().toISOString() : page.updatedAt })));
+    markDirty();
+  }
 
   function updateCategory(value) {
     setCategoryManuallyEdited(true);
@@ -987,13 +1120,17 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   async function unlockExisting(value) {
     const decrypted = await decryptObject(existing.encryption, value);
+    const decryptedPages = pagesFromEntrySource(decrypted, decrypted.html || '<p></p>');
+    const firstPage = decryptedPages[0];
+    setEntryPages(decryptedPages);
+    setSelectedEntryPageId(firstPage?.pageId || MAIN_ENTRY_PAGE_ID);
     setForm({
       title: decrypted.title || '',
       category: decrypted.category || 'Private Vault',
       tagsText: (decrypted.tags || []).join(', '),
       sourceUrl: decrypted.sourceUrl || '',
       summary: cleanVisibleText(decrypted.summary || ''),
-      html: decrypted.html || '<p></p>',
+      html: firstPage?.content || decrypted.html || '<p></p>',
     });
     setSourceMetadata(decrypted.sourceMetadata || EMPTY_SOURCE_METADATA);
     setSourceEnrichment(sourceEnrichmentFromMetadata(decrypted.sourceMetadata || EMPTY_SOURCE_METADATA, decrypted.sourceUrl || ''));
@@ -1381,7 +1518,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   }
   function sourceFailureMessage(error, sourceUrl) {
     const raw = error?.message || 'Could not import this link.';
-    if (/Instant scraping is disabled/i.test(raw)) return 'Instant scraping is disabled to keep the project free. Requests are processed by GitHub Actions.';
+    if (/Automatic discovery requests are queued|Instant scraping is disabled/i.test(raw)) return 'Automatic discovery requests are queued and processed by GitHub Actions so the app can stay free. Use Add from URL to queue this link.';
     if (/Sign in before source enrichment/i.test(raw)) return 'Sign in before source enrichment.';
     if (isLinkedInUrl(sourceUrl)) return 'LinkedIn did not allow complete automatic extraction. The shared text and link were saved.';
     return raw;
@@ -1584,7 +1721,13 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   function restoreDraft() {
     if (!draftPrompt) return;
-    setForm({ ...EMPTY_FORM, ...draftPrompt.form, summary: cleanVisibleText(draftPrompt.form?.summary || '') });
+    const draftPages = Array.isArray(draftPrompt.entryPages) && draftPrompt.entryPages.length
+      ? getEntryPages({ pages: draftPrompt.entryPages, html: draftPrompt.form?.html || '<p></p>' })
+      : pagesFromEntrySource({ html: draftPrompt.form?.html || '<p></p>' });
+    const selectedDraftPage = draftPages.find((page) => page.pageId === draftPrompt.selectedEntryPageId) || draftPages[0];
+    setEntryPages(draftPages);
+    setSelectedEntryPageId(selectedDraftPage?.pageId || MAIN_ENTRY_PAGE_ID);
+    setForm({ ...EMPTY_FORM, ...draftPrompt.form, html: selectedDraftPage?.content || draftPrompt.form?.html || '<p></p>', summary: cleanVisibleText(draftPrompt.form?.summary || '') });
     setSecure(Boolean(draftPrompt.secure));
     setAttachments(Array.isArray(draftPrompt.attachments) ? draftPrompt.attachments : []);
     setInlineFiles(Array.isArray(draftPrompt.inlineFiles) ? draftPrompt.inlineFiles : []);
@@ -1745,11 +1888,13 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     const saveAction = event.nativeEvent?.submitter?.value || 'save';
     setMessage('');
     setPayloadWarning('');
-    const plainText = htmlToText(form.html);
+    const draftPages = currentEntryPagesSnapshot();
+    const metadataHtml = entryPagesToHtml(draftPages);
+    const plainText = htmlToText(metadataHtml);
     const generated = generateSmartMetadata({
       pageId,
       title: form.title,
-      html: form.html,
+      html: metadataHtml,
       sourceUrl: form.sourceUrl,
       summary: form.summary,
       tagsText: form.tagsText,
@@ -1781,6 +1926,29 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       console.info('[EditorPage] save started', { uid: user.uid, pageId });
       setConnectionStatus(navigator.onLine ? 'Online' : 'Offline');
 
+      const saveNow = new Date().toISOString();
+      const encryptedPages = prepareEntryPagesForSave(draftPages, { entry: existing || {}, now: saveNow });
+      const encryptedMainPage = getMainPage({ pages: encryptedPages });
+      const pagesForSave = sanitizeEntryPages(draftPages, existing || {});
+      const mainPageForSave = getMainPage({ pages: pagesForSave });
+      const allPagesHtml = entryPagesToHtml(pagesForSave);
+      const allPagesPlainText = htmlToText(allPagesHtml);
+      const preservedArchived = Boolean(existing?.isArchived || existing?.archived);
+      const preservedShareEnabled = Boolean(existing?.shareEnabled || ((existing?.visibility === 'shareable' || existing?.visibility === 'share-link') && existing?.shareId));
+      const recordStateFields = {
+        sourceType: SOURCE_TYPES.manual,
+        createdByUser: true,
+        isArchived: preservedArchived,
+        archived: preservedArchived,
+        archivedAt: existing?.archivedAt || null,
+        archivedReason: existing?.archivedReason || null,
+        visibility: preservedShareEnabled ? 'shareable' : 'private',
+        shareEnabled: preservedShareEnabled,
+        shareId: preservedShareEnabled ? (existing?.shareId || null) : null,
+        shareCreatedAt: preservedShareEnabled ? (existing?.shareCreatedAt || null) : null,
+        shareExpiresAt: preservedShareEnabled ? (existing?.shareExpiresAt || null) : null,
+      };
+
       let data;
       if (secure) {
         const encryption = await encryptObject({
@@ -1789,7 +1957,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           tags,
           sourceUrl: form.sourceUrl.trim(),
           summary,
-          html: form.html,
+          html: encryptedMainPage?.content || form.html,
+          pages: encryptedPages,
           importantDates: dates,
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
           sourceMetadata,
@@ -1806,6 +1975,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           sourceDomain: '',
           summary: '',
           html: '',
+          content: '',
           plainText: '',
           wikiLinks: [],
           importantDates: [],
@@ -1814,6 +1984,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           inlineFiles: [],
           origin: recordOrigin || 'manual',
           createdOrigin: recordOrigin || 'manual',
+          ...recordStateFields,
           opportunityDetails: {},
           encryption,
         };
@@ -1830,12 +2001,14 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           sourceDomain: getSourceDomain(form.sourceUrl.trim()),
           sourceMetadata,
           summary,
-          html: sanitizeHtml(form.html),
-          plainText,
-          wikiLinks: extractWikiLinks(plainText),
+          html: mainPageForSave?.content || '<p></p>',
+          content: mainPageForSave?.content || '<p></p>',
+          pages: pagesForSave,
+          plainText: allPagesPlainText,
+          wikiLinks: extractWikiLinks(allPagesPlainText),
           importantDates: dates,
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
-          dateAnalysisAt: new Date().toISOString(),
+          dateAnalysisAt: saveNow,
           dateAnalysisSummary: {
             detectedCount: dates.filter((item) => item.detectedAutomatically || item.source === 'automatic').length,
             requiringConfirmation: dates.filter((item) => item.uncertain && !item.confirmed).length,
@@ -1846,6 +2019,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           opportunityDetails,
           origin: recordOrigin || 'manual',
           createdOrigin: recordOrigin || 'manual',
+          ...recordStateFields,
         };
       }
 
@@ -1868,6 +2042,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       }
 
       await savePage(user.uid, pageId, data, isNew);
+      if (!secure) setEntryPages(pagesForSave);
       clearStoredDraft(draftKey);
       setDraftSavedAt(null);
       setHasLocalChanges(false);
@@ -1927,10 +2102,10 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     try {
       if (existing.isArchived) {
         await unarchivePage(user.uid, existing.id);
-        setMessage('Page restored from archives.');
+        setMessage('Entry restored from archives.');
       } else {
         await archivePage(user.uid, existing.id, 'Archived from editor');
-        setMessage('Page archived.');
+        setMessage('Entry archived.');
         window.location.hash = '#/archives';
       }
       setSaveStatus('Saved');
@@ -1943,7 +2118,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   }
   async function deleteCurrent() {
     if (isNew || !existing) return;
-    if (!window.confirm('Delete this page permanently?')) return;
+    if (!window.confirm('Delete this entry permanently?')) return;
     setSaving(true);
     setSaveStatus('Saving...');
     try {
@@ -1953,7 +2128,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       clearStoredDraft(draftKey);
       window.location.hash = '#/';
     } catch (error) {
-      setMessage(error.message || 'Could not delete this page.');
+      setMessage(error.message || 'Could not delete this entry.');
       setSaveStatus('Save failed');
     } finally {
       setSaving(false);
@@ -2443,12 +2618,47 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       <form ref={editorFormRef} className="editor-layout" onSubmit={submit}>
         <section className="editor-main">
           <label className="field-label title-field">
-            Page title
-            <input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="Give this page a clear title" required />
+            Entry title
+            <input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="Give this entry a clear title" required />
           </label>
 
+          <section className="entry-page-manager" aria-label="Entry pages">
+            <div className="entry-page-manager-head">
+              <div>
+                <p className="eyebrow">ENTRY PAGES</p>
+                <h3>{selectedEntryPage?.title || 'Main Page'}</h3>
+              </div>
+              <button type="button" className="button primary" onClick={addEntryPageToDraft}><Plus size={16} /> Add Page</button>
+            </div>
+            <div className="entry-page-workspace">
+              <nav className="entry-page-list" aria-label="Pages in this entry">
+                {entryPages.map((entryPage, index) => (
+                  <button
+                    type="button"
+                    key={entryPage.pageId}
+                    className={entryPage.pageId === selectedEntryPage?.pageId ? 'is-active' : ''}
+                    onClick={() => selectEntryPage(entryPage.pageId)}
+                  >
+                    <span>{entryPage.pageId === MAIN_ENTRY_PAGE_ID ? 'Main Page' : `Page ${index + 1}`}</span>
+                    <strong>{entryPage.title || `Page ${index + 1}`}</strong>
+                  </button>
+                ))}
+              </nav>
+              <div className="entry-page-current">
+                <label className="field-label">Current page title
+                  <input value={selectedEntryPage?.title || ''} onChange={(event) => updateSelectedEntryPageTitle(event.target.value)} placeholder={selectedEntryPageIndex === 0 ? 'Main Page' : `Page ${selectedEntryPageIndex + 1}`} />
+                </label>
+                <div className="entry-page-actions">
+                  <button type="button" className="button secondary" disabled={selectedEntryPageIndex <= 0} onClick={() => moveSelectedEntryPage(-1)}><ArrowUp size={16} /> Move up</button>
+                  <button type="button" className="button secondary" disabled={selectedEntryPageIndex >= entryPages.length - 1} onClick={() => moveSelectedEntryPage(1)}><ArrowDown size={16} /> Move down</button>
+                  <button type="button" className="button secondary danger-soft" disabled={entryPages.length <= 1 || selectedEntryPage?.pageId === MAIN_ENTRY_PAGE_ID} onClick={deleteSelectedEntryPage}><Trash2 size={16} /> Delete page</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <RichEditor
-            key={`${pageId}-${secure}-${editorRevision}`}
+            key={`${pageId}-${selectedEntryPage?.pageId || MAIN_ENTRY_PAGE_ID}-${secure}-${editorRevision}`}
             initialHtml={form.html}
             onChange={(html) => update('html', html)}
             onImageFile={handleInlineImage}
@@ -2641,8 +2851,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             <button type="button" className="button secondary full" disabled={saving} onClick={() => { if (!hasLocalChanges || window.confirm('Discard unsaved changes?')) window.location.hash = '#/'; }}>Cancel</button>
             {message ? <div className="save-error-panel" role="alert">{message}</div> : null}
           </div>
-          {!isNew ? <button type="button" className="button secondary full" disabled={saving} onClick={toggleArchiveCurrent}>{existing?.isArchived ? 'Unarchive page' : 'Archive page'}</button> : null}
-          {!isNew ? <button type="button" className="button danger full" disabled={saving} onClick={deleteCurrent}>Delete page</button> : null}
+          {!isNew ? <button type="button" className="button secondary full" disabled={saving} onClick={toggleArchiveCurrent}>{existing?.isArchived ? 'Unarchive entry' : 'Archive entry'}</button> : null}
+          {!isNew ? <button type="button" className="button danger full" disabled={saving} onClick={deleteCurrent}>Delete entry</button> : null}
         </aside>
       </form>
       {preview ? (
