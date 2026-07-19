@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import AppShell from '../components/AppShell';
 import DiscoverySettingsPanel from '../components/DiscoverySettingsPanel';
 import { useAuth } from '../context/AuthContext';
@@ -10,7 +10,7 @@ import { downloadBackup } from '../utils/download';
 import { migrateLegacyPageDates } from '../utils/dates';
 import { readAutoEnrichPastedLinksMode, writeAutoEnrichPastedLinksMode } from '../utils/sourceLinks';
 
-export default function SettingsPage({ pages, pdfs = [] }) {
+export default function SettingsPage({ pages, pdfs = [], section = 'backup' }) {
   const { user } = useAuth();
   const fileInput = useRef(null);
   const [message, setMessage] = useState('');
@@ -22,6 +22,7 @@ export default function SettingsPage({ pages, pdfs = [] }) {
   const [serviceWorkerStatus, setServiceWorkerStatus] = useState('Checking service worker...');
   const [pendingOfflineCaptures, setPendingOfflineCaptures] = useState(0);
   const [autoEnrichPastedLinks, setAutoEnrichPastedLinks] = useState(readAutoEnrichPastedLinksMode);
+  const [theme, setTheme] = useState(() => localStorage.getItem('aprv-theme') || 'light');
 
   const testShareUrl = productionShareUrl({
     title: 'Test share',
@@ -30,6 +31,12 @@ export default function SettingsPage({ pages, pdfs = [] }) {
   });
 
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('aprv-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (section === 'sources' || section === 'appearance') return undefined;
     const dismissed = localStorage.getItem('aprv-install-dismissed') === 'true';
     function updateStandaloneStatus() {
       const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -80,11 +87,12 @@ export default function SettingsPage({ pages, pdfs = [] }) {
       window.removeEventListener('beforeinstallprompt', beforeInstall);
       window.removeEventListener('appinstalled', installed);
     };
-  }, [installPrompt]);
+  }, [installPrompt, section]);
 
   function updateAutoEnrichPastedLinks(value) {
     setAutoEnrichPastedLinks(writeAutoEnrichPastedLinksMode(value));
   }
+
   async function installPwa() {
     if (!installPrompt) {
       const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -154,12 +162,39 @@ export default function SettingsPage({ pages, pdfs = [] }) {
     }
   }
 
+  if (section === 'sources') {
+    return (
+      <AppShell title="Sources">
+        <section className="settings-grid settings-grid-single">
+          <DiscoverySettingsPanel />
+        </section>
+      </AppShell>
+    );
+  }
+
+  if (section === 'appearance') {
+    return (
+      <AppShell title="Appearance">
+        <section className="settings-grid settings-grid-single">
+          <article className="settings-card full-width">
+            <h2>Appearance</h2>
+            <p>Choose the interface theme for this browser.</p>
+            <div className="theme-choice-row" role="group" aria-label="Theme choice">
+              <button type="button" className={`button ${theme === 'light' ? 'primary' : 'secondary'}`} onClick={() => setTheme('light')}>Light</button>
+              <button type="button" className={`button ${theme === 'dark' ? 'primary' : 'secondary'}`} onClick={() => setTheme('dark')}>Dark</button>
+            </div>
+          </article>
+        </section>
+      </AppShell>
+    );
+  }
+
   return (
-    <AppShell title="Backup & Settings">
+    <AppShell title="Settings">
       <section className="settings-grid">
         <article className="settings-card">
           <h2>Complete library backup</h2>
-          <p>Exports page records, Firebase Storage attachment metadata and Google Drive PDF metadata as JSON. Secure notes remain encrypted in the backup. File bytes stay in Firebase Storage or Google Drive.</p>
+          <p>Exports page records, attachment metadata and PDF metadata as JSON. Secure notes remain encrypted in the backup.</p>
           <button className="button primary" onClick={() => downloadBackup(pages, pdfs)}>Download JSON backup</button>
           <button className="button secondary" disabled={working} onClick={() => fileInput.current?.click()}>{working ? 'Importing...' : 'Restore JSON backup'}</button>
           <input ref={fileInput} hidden type="file" accept="application/json" onChange={handleImport} />
@@ -182,20 +217,9 @@ export default function SettingsPage({ pages, pdfs = [] }) {
               <option value="never">Disabled</option>
             </select>
           </label>
-          <p className="small-note">Even when automatic enrichment is disabled, the editor still shows Link detected - Analyse source.</p>
           <div className="settings-action-row">
             <button className="button primary" type="button" disabled={!installPrompt && !/available/i.test(installStatus)} onClick={installPwa}>Install AP Research Vault</button>
             <a className="button secondary" href="#/shared-inbox">Open Shared Inbox</a>
-          </div>
-          <div className="sharing-instructions">
-            <h3>Android/Chrome</h3>
-            <ol>
-              <li>Open AP Research Vault in Chrome.</li>
-              <li>Select Install App or Add to Home Screen.</li>
-              <li>Open Facebook or LinkedIn.</li>
-              <li>Tap Share.</li>
-              <li>Select AP Research Vault.</li>
-            </ol>
           </div>
           <div className="sharing-test-box">
             <strong>Test Share Target</strong>
@@ -218,31 +242,24 @@ export default function SettingsPage({ pages, pdfs = [] }) {
             <div><dt>Stored pages</dt><dd>{pages.length}</dd></div>
             <div><dt>Drive PDFs</dt><dd>{pdfs.length}</dd></div>
           </dl>
-          <p>Firestore rules must use the exact UID. The frontend also checks the email and signs out anything else immediately.</p>
         </article>
 
         <article className="settings-card">
           <h2>Automatic date analysis</h2>
-          <p>Reanalyse saved pages using the local deterministic date detector. This is safe to run more than once and preserves manually edited dates.</p>
+          <p>Reanalyse saved pages using the local deterministic date detector. This preserves manually edited dates.</p>
           <button className="button secondary" disabled={working || !pages.length} onClick={reanalyseExistingPages}>Reanalyse all pages</button>
           {reanalysisProgress ? <p className="status-message">{reanalysisProgress}</p> : null}
         </article>
 
-        <article className="settings-card">
-          <h2>Review entry origins</h2>
-          <p>Use All Notes filters and bulk actions to correct entries that were imported, shared, saved from discovery, or marked as discoveries by mistake.</p>
-          <a className="button secondary" href="#/notes">Review entry origins</a>
-        </article>
-        <DiscoverySettingsPanel />
-
         <article className="settings-card warning-card">
           <h2>Password safety</h2>
-          <p>Do not treat this application as a replacement for a professionally audited password manager. Use secure notes for private references, research and recovery instructions, not as the only copy of banking passwords, API keys or recovery codes.</p>
+          <p>Use secure notes for private references, research and recovery instructions, not as the only copy of banking passwords, API keys or recovery codes.</p>
         </article>
 
         <article className="settings-card">
-          <h2>Download choices</h2>
-          <p>Each page includes "Download HTML" and "Print / Save PDF". Page attachments open from Firebase Storage, PDF library files open from Google Drive, and your browser print screen can create a PDF containing the currently unlocked page.</p>
+          <h2>Sources</h2>
+          <p>Discovery source controls are kept separate from the main workspace.</p>
+          <a className="button secondary" href="#/settings/sources">Open Sources</a>
         </article>
       </section>
     </AppShell>

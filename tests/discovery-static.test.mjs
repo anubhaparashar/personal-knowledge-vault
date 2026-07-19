@@ -140,6 +140,26 @@ run('Origin model separates diary, my entries, discoveries and archives', () => 
   assert.equal(pageMatchesSection(shareableManual, 'shareable'), true);
 });
 
+run('Editor keyboard handlers ignore editable targets and preserve draft whitespace', () => {
+  const domUtils = read('src/utils/dom.js');
+  const editor = read('src/pages/EditorPage.jsx');
+  const menu = read('src/components/NewEntryMenu.jsx');
+  const calendar = read('src/components/ResearchCalendar.jsx');
+
+  assert.match(domUtils, /export const isEditableTarget/);
+  assert.match(domUtils, /input, textarea, select, \[contenteditable="true"\], \[role="textbox"\]/);
+  assert.match(domUtils, /target\.closest/);
+  assert.match(menu, /isEditableTarget\(event\.target\)/);
+  assert.match(calendar, /isEditableTarget\(event\.target\)/);
+
+  assert.match(editor, /function techDraftDetails/);
+  assert.match(editor, /const details = techDraftDetails\(techDetails\)/);
+  assert.match(editor, /function listToText\(values = \[\]\) \{\s*if \(typeof values === 'string'\) return values;/);
+  assert.match(editor, /function updateTechList\(name, value\) \{\s*updateTechDetail\(name, value\);/);
+  assert.match(editor, /onChange=\{\(event\) => update\('summary', event\.target\.value\)\}/);
+  assert.doesNotMatch(editor, /update\('summary', cleanVisibleText\(event\.target\.value\)\)/);
+  assert.doesNotMatch(editor, /updateTechDetail\(name, normalizeStringList\(value\)\)/);
+});
 run('Technology Reference entries stay manual and searchable across tech fields', () => {
   const cloudflare = normalizePage({
     id: 'tech-cloudflare',

@@ -95,9 +95,6 @@ export default function DiscoverySettingsPanel() {
     }
   }
 
-  function testSource() {
-    setMessage('Instant source testing is disabled to keep the project free. Save the source, then run the Research Discovery workflow.');
-  }
 
   async function saveSource() {
     setWorking(true);
@@ -171,7 +168,6 @@ export default function DiscoverySettingsPanel() {
           <label className="switch-field"><input type="checkbox" checked={sourceDraft.enabled !== false} onChange={(event) => updateSource('enabled', event.target.checked)} /><span>Enabled</span></label>
         </div>
         <div className="source-form-actions">
-          <button className="button secondary" disabled={working || !sourceDraft.url} onClick={testSource}>Test Source</button>
           <button className="button primary" disabled={working || !canSaveSource} onClick={saveSource}>{editingExisting ? 'Update Source' : 'Save Source'}</button>
           <button className="button secondary" disabled={working} onClick={() => setSourceDraft(EMPTY_SOURCE)}>Clear</button>
         </div>
@@ -189,7 +185,7 @@ export default function DiscoverySettingsPanel() {
                 <div><dt>Next scan</dt><dd>{source.enabled !== false ? FIXED_DISCOVERY_SCHEDULE_LABEL : 'Paused'}</dd></div>
               </dl>
               <div className="source-row-actions">
-                <button type="button" className="text-link" disabled={working} onClick={() => testSource(source)}>Test Source</button>
+
                 <button type="button" className="text-link" disabled={working} onClick={() => scanSource(source)}>Scan Now</button>
                 <button type="button" className="text-link" onClick={() => setMessage(`${source.name || source.url}: ${source.resultCount || source.resultsFound || 0} result(s) found in the last run.`)}>View Results</button>
                 <button type="button" className="text-link" onClick={() => setMessage(source.lastError ? `${source.name || source.url}: ${source.lastError}` : 'No errors recorded for this source.')}>View Errors</button>
@@ -205,3 +201,4 @@ export default function DiscoverySettingsPanel() {
     </section>
   );
 }
+

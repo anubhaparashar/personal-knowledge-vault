@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Branding';
+import { isEditableTarget } from '../utils/dom';
 import {
   CALENDAR_STARTS_ON,
   DATE_CATEGORY_OPTIONS,
@@ -211,9 +212,9 @@ export function ActiveFilterChips({ filters, onRemove, onClear }) {
   return (
     <div className="active-filter-chips" aria-label="Active filters">
       {chips.map((chip) => (
-        <button key={`${chip.group}:${chip.value}`} type="button" onClick={() => onRemove(chip.group, chip.value)}>{chip.label}<Icon name="x" size={14} /></button>
+        <button key={`${chip.group}:${chip.value}`} type="button" className="chip-button" onClick={() => onRemove(chip.group, chip.value)}>{chip.label}<Icon name="x" size={14} /></button>
       ))}
-      <button type="button" className="clear-filter-chip" onClick={onClear}>Clear all</button>
+      <button type="button" className="chip-button clear-filter-chip" onClick={onClear}>Clear all</button>
     </div>
   );
 }
@@ -222,6 +223,7 @@ export function MonthView({ currentDate, selectedDate, eventsByDate, onSelectDat
   const weekDays = getWeekDays(currentDate, CALENDAR_STARTS_ON);
 
   function handleKeyDown(event) {
+    if (isEditableTarget(event.target)) return;
     const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     if (!(event.key in moves)) return;
     event.preventDefault();
@@ -705,6 +707,7 @@ export default function ResearchCalendar({ pages = [], loading = false, error = 
 
   useEffect(() => {
     const handleKey = (event) => {
+      if (isEditableTarget(event.target)) return;
       if (event.key !== 'Escape') return;
       setPreviewEvent(null);
       setModalState(null);

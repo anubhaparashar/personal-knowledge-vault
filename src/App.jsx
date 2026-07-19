@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { migratePageOriginFields, savePage, subscribePages } from './services/pages';
 import { parseShareLaunch, putLocalCapture, replaceShareLaunchUrl } from './services/shareCapture';
@@ -208,7 +208,7 @@ function AuthenticatedApp() {
   if (section === 'edit') return <EditorPage key={`edit-${id}`} routeId={id || 'new'} pages={pages} pagesLoaded={pagesLoaded} />;
   if (section === 'read' && id) return <ReaderPage key={`read-${id}`} pageId={id} pages={pages} pdfs={pdfs} pagesLoaded={pagesLoaded} />;
   if (section === 'pdfs') return <PdfsPage pages={pages} pdfs={pdfs} loading={!pdfsLoaded} error={pdfsError} initialPdfId={id || ''} />;
-  if (section === 'settings') return <SettingsPage pages={pages} pdfs={pdfs} />;
+  if (section === 'settings') return <SettingsPage pages={pages} pdfs={pdfs} section={id || 'backup'} />;
   if (section === 'calendar' || section === 'research-calendar') return <ResearchCalendarPage pages={pages} loading={!pagesLoaded} error={pagesError || pdfsError} />;
   if (section === 'shared-inbox') return <SharedInboxPage pages={pages} captures={sharedInbox} loading={!sharedInboxLoaded} error={sharedInboxError} />;
   const dashboardFocus = section || 'overview';
@@ -222,3 +222,4 @@ export default function App() {
     </AuthProvider>
   );
 }
+

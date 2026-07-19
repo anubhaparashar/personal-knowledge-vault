@@ -917,6 +917,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   }
 
   function renderTechReferenceDashboard() {
+    const hasTechnologyEntries = technologyPages.length > 0;
     return (
       <AppShell title="Tech Reference">
         <div className="dashboard-stack tech-reference-page">
@@ -925,7 +926,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           <SectionPanel eyebrow="TECH REFERENCE" title="Technology reference" actions={(
             <>
               <Badge>{filteredTechnologyPages.length} shown</Badge>
-              <PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton>
+              {hasTechnologyEntries ? <PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton> : null}
             </>
           )}>
             <div className="tech-reference-toolbar" role="search">
@@ -934,14 +935,14 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
                 <span className="sr-only">Search Tech Reference</span>
                 <input value={techSearch} onChange={(event) => setTechSearch(event.target.value)} placeholder="Search technologies, aliases, projects, setup notes and problems..." />
               </label>
-              <label className="select-control"><span>Category</span><select value={techCategoryFilter} onChange={(event) => setTechCategoryFilter(event.target.value)}><option value="all">All</option>{techFilterData.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
-              <label className="select-control"><span>Project</span><select value={techProjectFilter} onChange={(event) => setTechProjectFilter(event.target.value)}><option value="all">All</option>{techFilterData.projects.map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
-              <label className="select-control"><span>Status</span><select value={techStatusFilter} onChange={(event) => setTechStatusFilter(event.target.value)}><option value="all">All</option>{TECH_STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></label>
-              <label className="select-control"><span>Tag</span><select value={techTagFilter} onChange={(event) => setTechTagFilter(event.target.value)}><option value="all">All</option>{techFilterData.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
-              <label className="select-control"><span>Sort</span><select value={techSortMode} onChange={(event) => setTechSortMode(event.target.value)}><option value="updated-desc">Recently updated</option><option value="title-asc">A-Z</option></select></label>
+              <label className="select-control tech-filter-control"><span>Category</span><select value={techCategoryFilter} onChange={(event) => setTechCategoryFilter(event.target.value)}><option value="all">All</option>{techFilterData.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+              <label className="select-control tech-filter-control"><span>Project</span><select value={techProjectFilter} onChange={(event) => setTechProjectFilter(event.target.value)}><option value="all">All</option>{techFilterData.projects.map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
+              <label className="select-control tech-filter-control"><span>Status</span><select value={techStatusFilter} onChange={(event) => setTechStatusFilter(event.target.value)}><option value="all">All</option>{TECH_STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></label>
+              <label className="select-control tech-filter-control"><span>Tag</span><select value={techTagFilter} onChange={(event) => setTechTagFilter(event.target.value)}><option value="all">All</option>{techFilterData.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
+              <label className="select-control tech-filter-control tech-sort-control"><span>Sort</span><select value={techSortMode} onChange={(event) => setTechSortMode(event.target.value)}><option value="updated-desc">Recently updated</option><option value="title-asc">A-Z</option></select></label>
             </div>
 
-            <div className="note-library is-grid tech-reference-grid">
+            <div className={`note-library is-grid tech-reference-grid ${!hasTechnologyEntries ? 'is-empty' : ''}`}>
               {filteredTechnologyPages.map((page) => {
                 const details = normalizeTechDetails(page.techDetails);
                 const projects = details.projects.filter((project) => project.projectName || project.purpose);
@@ -977,10 +978,14 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
                   </article>
                 );
               })}
-              {!filteredTechnologyPages.length ? (
-                <EmptyState icon={Wrench} title="No technology references yet" actions={<PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton>}>
-                  Add reusable notes for tools, platforms, libraries and services used across projects.
-                </EmptyState>
+              {!hasTechnologyEntries ? (
+                <div className="tech-reference-empty-wrap">
+                  <EmptyState icon={Wrench} title="No technology references yet" actions={<PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton>}>
+                    Add reusable notes for tools, platforms, libraries and services used across projects.
+                  </EmptyState>
+                </div>
+              ) : !filteredTechnologyPages.length ? (
+                <div className="tech-reference-no-results">No matching technology references.</div>
               ) : null}
             </div>
           </SectionPanel>
@@ -1129,3 +1134,5 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     </AppShell>
   );
 }
+
+

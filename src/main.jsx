@@ -75,7 +75,7 @@ class StartupErrorBoundary extends React.Component {
             <h1>The app could not start</h1>
             <p>Refresh once to load the newest GitHub Pages build. If it still fails, open DevTools and check the console for the startup error.</p>
             <p>{this.state.error?.message ? `Error: ${this.state.error.message}` : 'Error details were not available.'}</p>
-            <button type="button" onClick={() => window.location.reload()}>Reload app</button>
+            <button type="button" className="button primary" onClick={() => window.location.reload()}>Reload app</button>
           </article>
         </div>
       );
@@ -108,3 +108,4 @@ try {
   console.error('[app] startup render failed', { message: error?.message, stack: error?.stack });
   renderStartupFailure(error);
 }
+

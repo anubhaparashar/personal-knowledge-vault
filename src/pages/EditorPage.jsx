@@ -309,6 +309,7 @@ function hasOpportunityDetails(details = {}) {
 }
 
 function listToText(values = []) {
+  if (typeof values === 'string') return values;
   return normalizeStringList(values).join(', ');
 }
 
@@ -322,6 +323,36 @@ function categoryFromTechPath(category = '') {
   return value.toLowerCase().startsWith('tech reference/') ? value.split('/').slice(1).join('/').trim() : '';
 }
 
+function normalizeTechDraftUsage(record = {}) {
+  return {
+    ...EMPTY_TECH_USAGE,
+    ...record,
+    servicesUsed: Array.isArray(record.servicesUsed) ? record.servicesUsed : (record.servicesUsed ?? ''),
+  };
+}
+
+function normalizeTechDraftTroubleshooting(record = {}) {
+  return {
+    ...EMPTY_TECH_TROUBLESHOOTING,
+    ...record,
+  };
+}
+
+function techDraftDetails(details = {}) {
+  if (!details || typeof details !== 'object') return createEmptyTechDetails();
+  const rawStatus = String(details.status || 'active').trim().toLowerCase().replace(/\s+/g, '-');
+  const status = TECH_STATUS_OPTIONS.some((item) => item.value === rawStatus) ? rawStatus : 'active';
+  return {
+    ...createEmptyTechDetails(),
+    ...details,
+    status,
+    aliases: details.aliases ?? [],
+    projects: Array.isArray(details.projects) ? details.projects.map(normalizeTechDraftUsage) : [],
+    useCases: details.useCases ?? [],
+    relatedTechnologies: details.relatedTechnologies ?? [],
+    troubleshooting: Array.isArray(details.troubleshooting) ? details.troubleshooting.map(normalizeTechDraftTroubleshooting) : [],
+  };
+}
 function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}, entryPages = [], techDetails = {}) {
   const pagesText = entryPages.length ? htmlToText(entryPagesToHtml(entryPages)) : '';
   return Boolean(
@@ -976,7 +1007,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   }
 
   function updateTechList(name, value) {
-    updateTechDetail(name, normalizeStringList(value));
+    updateTechDetail(name, value);
   }
 
   function updateTechCategory(value) {
@@ -1004,7 +1035,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       projects[index] = {
         ...EMPTY_TECH_USAGE,
         ...(projects[index] || {}),
-        [field]: field === 'servicesUsed' ? normalizeStringList(value) : value,
+        [field]: value,
       };
       return { ...current, projects };
     });
@@ -1862,7 +1893,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     const selectedDraftPage = draftPages.find((page) => page.pageId === draftPrompt.selectedEntryPageId) || draftPages[0];
     setEntryPages(draftPages);
     setSelectedEntryPageId(selectedDraftPage?.pageId || MAIN_ENTRY_PAGE_ID);
-    setForm({ ...EMPTY_FORM, ...draftPrompt.form, html: selectedDraftPage?.content || draftPrompt.form?.html || '<p></p>', summary: cleanVisibleText(draftPrompt.form?.summary || '') });
+    setForm({ ...EMPTY_FORM, ...draftPrompt.form, html: selectedDraftPage?.content || draftPrompt.form?.html || '<p></p>', summary: draftPrompt.form?.summary || '' });
     setSecure(Boolean(draftPrompt.secure));
     setAttachments(Array.isArray(draftPrompt.attachments) ? draftPrompt.attachments : []);
     setInlineFiles(Array.isArray(draftPrompt.inlineFiles) ? draftPrompt.inlineFiles : []);
@@ -1872,7 +1903,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setDetectedSourceUrls([]);
     autoEnrichedSourceRef.current = draftPrompt.form?.sourceUrl || draftPrompt.sourceMetadata?.originalUrl || '';
     setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(draftPrompt.opportunityDetails || {}) });
-    setTechDetails(normalizeTechDetails(draftPrompt.techDetails || {}));
+    setTechDetails(techDraftDetails(draftPrompt.techDetails || {}));
     setEntryTypeId(draftPrompt.entryTypeId || draftPrompt.entryType || '');
     setRecordOrigin(draftPrompt.recordOrigin || 'manual');
     setCategoryManuallyEdited(Boolean(draftPrompt.categoryManuallyEdited));
@@ -2641,7 +2672,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   function renderTechnologyDetails() {
     if (!isTechnologyDraft) return null;
-    const details = normalizeTechDetails(techDetails);
+    const details = techDraftDetails(techDetails);
     const usageRows = details.projects.length ? details.projects : [{ ...EMPTY_TECH_USAGE }];
     const troubleshootingRows = details.troubleshooting.length ? details.troubleshooting : [];
     return (
@@ -3189,7 +3220,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             {sourceFacts.length ? <p className="small-note">Metadata is stored with the page and can be edited.</p> : null}
           </section>
 
-          <label className="field-label">Summary<textarea rows="4" value={form.summary} onChange={(event) => update('summary', cleanVisibleText(event.target.value))} placeholder="Short description for the index" /></label>
+          <label className="field-label">Summary<textarea rows="4" value={form.summary} onChange={(event) => update('summary', event.target.value)} placeholder="Short description for the index" /></label>
 
           <div className="secure-toggle">
             <label><input type="checkbox" checked={secure} onChange={(event) => toggleSecure(event.target.checked)} /> Encrypt as a secure note</label>
