@@ -17,6 +17,88 @@ export const SOURCE_TYPES = {
   discovery: 'discovery',
 };
 
+export const TECHNOLOGY_ENTRY_TYPE = 'technology';
+
+export const TECH_REFERENCE_CATEGORIES = [
+  'Hosting',
+  'Domain and DNS',
+  'Email',
+  'Cloud',
+  'Database',
+  'Authentication',
+  'Frontend',
+  'Backend',
+  'AI/ML',
+  'Computer Vision',
+  'DevOps',
+  'Deployment',
+  'Security',
+  'Analytics',
+  'API',
+  'Development Tool',
+  'Other',
+];
+
+export const TECH_STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'testing', label: 'Testing' },
+  { value: 'previously-used', label: 'Previously Used' },
+  { value: 'deprecated', label: 'Deprecated' },
+];
+
+export const TECH_STATUS_LABELS = Object.fromEntries(TECH_STATUS_OPTIONS.map((item) => [item.value, item.label]));
+
+export const EMPTY_TECH_USAGE = {
+  projectName: '',
+  projectUrl: '',
+  purpose: '',
+  servicesUsed: [],
+  environment: '',
+  dateAdded: '',
+  notes: '',
+};
+
+export const EMPTY_TECH_TROUBLESHOOTING = {
+  problem: '',
+  symptoms: '',
+  cause: '',
+  solution: '',
+  dateSolved: '',
+  relatedProject: '',
+};
+
+export const EMPTY_TECH_DETAILS = {
+  canonicalName: '',
+  aliases: [],
+  technologyCategory: '',
+  officialUrl: '',
+  shortDefinition: '',
+  whyUsed: '',
+  mainPurpose: '',
+  alternatives: '',
+  status: 'active',
+  lastVerifiedAt: '',
+  projects: [],
+  useCases: [],
+  setupNotes: '',
+  configurationNotes: '',
+  commonCommands: '',
+  issuesAndSolutions: '',
+  limitations: '',
+  securityNotes: '',
+  relatedTechnologies: [],
+  importantConcepts: '',
+  problemSolved: '',
+  advantages: '',
+  setupSteps: '',
+  codeSnippets: '',
+  environmentVariables: '',
+  usefulLinks: '',
+  troubleshooting: [],
+  relatedPages: '',
+  references: '',
+  personalNotes: '',
+};
 const LEGACY_ORIGIN_ALIASES = {
   'manually-added': 'manual',
   'manual-entry': 'manual',
@@ -58,7 +140,7 @@ export const ORIGIN_TONES = {
   'saved-discovery': 'completed',
 };
 
-const MY_WORK_FOCI = new Set(['diary', 'ideas', 'project-ideas', 'applications', 'proposals', 'projects', 'papers', 'literature']);
+const MY_WORK_FOCI = new Set(['diary', 'ideas', 'project-ideas', 'applications', 'proposals', 'projects', 'papers', 'literature', 'tech-reference']);
 const PERSONAL_FOCI = new Set(['general-notes', 'books', 'secure-notes']);
 const DISCOVERY_FOCI = new Set(['discoveries', 'scholarships', 'postdoctoral', 'fellowships', 'grants', 'jobs', 'conferences', 'journals', 'special-issues', 'submission-deadlines']);
 export const MAIN_ENTRY_PAGE_ID = 'main';
@@ -72,6 +154,275 @@ function lower(value = '') {
   return text(value).toLowerCase();
 }
 
+export function normalizeStringList(value = []) {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => normalizeStringList(item))
+      .map(text)
+      .filter(Boolean);
+  }
+  if (value == null) return [];
+  return String(value)
+    .split(/[;,\n]/)
+    .map(text)
+    .filter(Boolean);
+}
+
+function objectHasValue(value = {}) {
+  return Object.values(value || {}).some((item) => {
+    if (Array.isArray(item)) return item.length > 0;
+    if (item && typeof item === 'object') return objectHasValue(item);
+    return text(item).length > 0;
+  });
+}
+
+function normalizeTechUsage(record = {}) {
+  const next = {
+    ...EMPTY_TECH_USAGE,
+    ...record,
+    projectName: text(record.projectName || record.name || record.title),
+    projectUrl: text(record.projectUrl || record.url),
+    purpose: text(record.purpose),
+    servicesUsed: normalizeStringList(record.servicesUsed || record.services),
+    environment: text(record.environment),
+    dateAdded: text(record.dateAdded),
+    notes: text(record.notes),
+  };
+  return next;
+}
+
+function normalizeTechTroubleshooting(record = {}) {
+  return {
+    ...EMPTY_TECH_TROUBLESHOOTING,
+    ...record,
+    problem: text(record.problem),
+    symptoms: text(record.symptoms),
+    cause: text(record.cause),
+    solution: text(record.solution),
+    dateSolved: text(record.dateSolved),
+    relatedProject: text(record.relatedProject),
+  };
+}
+
+export function createEmptyTechDetails() {
+  return {
+    ...EMPTY_TECH_DETAILS,
+    aliases: [],
+    projects: [],
+    useCases: [],
+    relatedTechnologies: [],
+    troubleshooting: [],
+  };
+}
+
+export function normalizeTechDetails(details = {}) {
+  if (!details || typeof details !== 'object') return createEmptyTechDetails();
+  const rawStatus = lower(details.status || 'active').replace(/\s+/g, '-');
+  const status = TECH_STATUS_LABELS[rawStatus] ? rawStatus : 'active';
+  const projects = Array.isArray(details.projects) ? details.projects : [];
+  const troubleshooting = Array.isArray(details.troubleshooting || details.problemsAndSolutions)
+    ? (details.troubleshooting || details.problemsAndSolutions)
+    : [];
+  return {
+    ...createEmptyTechDetails(),
+    ...details,
+    canonicalName: text(details.canonicalName),
+    aliases: normalizeStringList(details.aliases),
+    technologyCategory: text(details.technologyCategory || details.category),
+    officialUrl: text(details.officialUrl),
+    shortDefinition: text(details.shortDefinition || details.definition),
+    whyUsed: text(details.whyUsed),
+    mainPurpose: text(details.mainPurpose),
+    alternatives: text(details.alternatives),
+    status,
+    lastVerifiedAt: text(details.lastVerifiedAt),
+    projects: projects.map(normalizeTechUsage).filter(objectHasValue),
+    useCases: normalizeStringList(details.useCases),
+    setupNotes: text(details.setupNotes),
+    configurationNotes: text(details.configurationNotes),
+    commonCommands: text(details.commonCommands),
+    issuesAndSolutions: text(details.issuesAndSolutions),
+    limitations: text(details.limitations),
+    securityNotes: text(details.securityNotes),
+    relatedTechnologies: normalizeStringList(details.relatedTechnologies),
+    importantConcepts: text(details.importantConcepts),
+    problemSolved: text(details.problemSolved),
+    advantages: text(details.advantages),
+    setupSteps: text(details.setupSteps),
+    codeSnippets: text(details.codeSnippets),
+    environmentVariables: text(details.environmentVariables),
+    usefulLinks: text(details.usefulLinks),
+    troubleshooting: troubleshooting.map(normalizeTechTroubleshooting).filter(objectHasValue),
+    relatedPages: text(details.relatedPages),
+    references: text(details.references),
+    personalNotes: text(details.personalNotes),
+  };
+}
+
+export function hasTechnologyDetails(details = {}) {
+  const normalized = normalizeTechDetails(details);
+  return Object.entries(normalized).some(([key, value]) => key !== 'status' && objectHasValue({ value }));
+}
+
+export function technologyStatusLabel(status = 'active') {
+  return TECH_STATUS_LABELS[lower(status).replace(/\s+/g, '-')] || TECH_STATUS_LABELS.active;
+}
+
+export function technologyStatusTone(status = 'active') {
+  const value = lower(status).replace(/\s+/g, '-');
+  if (value === 'deprecated') return 'overdue';
+  if (value === 'testing') return 'due-soon';
+  if (value === 'previously-used') return 'neutral';
+  return 'completed';
+}
+
+export function isTechnologyEntry(page = {}) {
+  const type = lower(page.entryType || page.entryTypeId || page.type);
+  if (type === TECHNOLOGY_ENTRY_TYPE) return true;
+  if (page.techDetails && hasTechnologyDetails(page.techDetails)) return true;
+  const category = lower(page.category);
+  return category === 'tech reference' || category.startsWith('tech reference/');
+}
+
+function stripHtmlForSearch(value = '') {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;|&apos;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeSearchText(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function flattenSearchValue(value) {
+  if (Array.isArray(value)) return value.map(flattenSearchValue).filter(Boolean).join(' ');
+  if (value && typeof value === 'object') return Object.values(value).map(flattenSearchValue).filter(Boolean).join(' ');
+  return text(value);
+}
+
+function domainFromUrl(value = '') {
+  try {
+    return new URL(value).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function addSearchField(fields, label, value, scopes = ['all']) {
+  const raw = flattenSearchValue(value);
+  if (!raw) return;
+  fields.push({ label, value: raw, scopes });
+}
+
+function searchableEntryPages(page = {}) {
+  if (page.secure) return '';
+  return getEntryPages(page).map((entryPage) => [entryPage.title, stripHtmlForSearch(entryPage.content)].filter(Boolean).join(' ')).join(' ');
+}
+
+function addTechnologySearchFields(fields, page = {}) {
+  const tech = normalizeTechDetails(page.techDetails);
+  const projectNames = tech.projects.map((project) => project.projectName);
+  const projectUrls = tech.projects.map((project) => [project.projectUrl, domainFromUrl(project.projectUrl)].filter(Boolean).join(' '));
+  const projectPurposes = tech.projects.map((project) => project.purpose);
+  const projectServices = tech.projects.map((project) => project.servicesUsed);
+  const projectNotes = tech.projects.map((project) => [project.environment, project.dateAdded, project.notes].filter(Boolean).join(' '));
+  const troubleshooting = tech.troubleshooting;
+
+  addSearchField(fields, 'Technology name', [tech.canonicalName, page.title], ['all', 'titles']);
+  addSearchField(fields, 'Aliases', tech.aliases, ['all', 'titles', 'content']);
+  addSearchField(fields, 'Definition', tech.shortDefinition, ['all', 'content']);
+  addSearchField(fields, 'Main purpose', [tech.mainPurpose, tech.importantConcepts], ['all', 'content']);
+  addSearchField(fields, 'Why used', [tech.whyUsed, tech.problemSolved, tech.advantages], ['all', 'content']);
+  addSearchField(fields, 'Technology category', tech.technologyCategory, ['all', 'categories']);
+  addSearchField(fields, 'Official website', [tech.officialUrl, domainFromUrl(tech.officialUrl)], ['all', 'sources']);
+  addSearchField(fields, 'Project name', projectNames, ['all', 'content']);
+  addSearchField(fields, 'Project URL', projectUrls, ['all', 'sources']);
+  addSearchField(fields, 'Use-case purpose', [tech.useCases, projectPurposes], ['all', 'content']);
+  addSearchField(fields, 'Services used', projectServices, ['all', 'content']);
+  addSearchField(fields, 'Project notes', projectNotes, ['all', 'content']);
+  addSearchField(fields, 'Setup notes', [tech.setupNotes, tech.setupSteps, tech.usefulLinks], ['all', 'content']);
+  addSearchField(fields, 'Configuration notes', [tech.configurationNotes, tech.codeSnippets, tech.environmentVariables], ['all', 'content']);
+  addSearchField(fields, 'Commands', tech.commonCommands, ['all', 'content']);
+  addSearchField(fields, 'Problem', troubleshooting.map((item) => item.problem), ['all', 'content']);
+  addSearchField(fields, 'Symptoms', troubleshooting.map((item) => item.symptoms), ['all', 'content']);
+  addSearchField(fields, 'Cause', troubleshooting.map((item) => item.cause), ['all', 'content']);
+  addSearchField(fields, 'Problem solution', [tech.issuesAndSolutions, troubleshooting.map((item) => item.solution)], ['all', 'content']);
+  addSearchField(fields, 'Limitations', tech.limitations, ['all', 'content']);
+  addSearchField(fields, 'Alternatives', tech.alternatives, ['all', 'content']);
+  addSearchField(fields, 'Security notes', tech.securityNotes, ['all', 'content']);
+  addSearchField(fields, 'Related technologies', tech.relatedTechnologies, ['all', 'content']);
+  addSearchField(fields, 'Related pages', tech.relatedPages, ['all', 'content']);
+  addSearchField(fields, 'References', [tech.references, tech.personalNotes], ['all', 'content', 'sources']);
+}
+
+export function buildPageSearchDocument(page = {}, scope = 'all') {
+  const fields = [];
+  if (page.secure) {
+    addSearchField(fields, 'Private vault', 'locked note private vault', ['all', 'titles', 'content', 'categories']);
+  } else {
+    addSearchField(fields, 'Title', page.title, ['all', 'titles']);
+    addSearchField(fields, 'Summary', page.summary, ['all', 'content']);
+    addSearchField(fields, 'Content', [page.plainText, searchableEntryPages(page)], ['all', 'content']);
+    addSearchField(fields, 'Category', page.category, ['all', 'categories']);
+    addSearchField(fields, 'Tags', page.tags, ['all', 'tags']);
+    addSearchField(fields, 'Source', [page.sourceUrl, page.sourceDomain, page.sourceTitle, page.sourceMetadata], ['all', 'sources']);
+    addSearchField(fields, 'Internal links', page.wikiLinks, ['all', 'content']);
+    if (isTechnologyEntry(page)) addTechnologySearchFields(fields, page);
+  }
+
+  const scopedFields = scope === 'all' ? fields : fields.filter((field) => field.scopes.includes(scope));
+  return {
+    text: normalizeSearchText(scopedFields.map((field) => field.value).join(' ')),
+    fields: scopedFields.map((field) => ({
+      ...field,
+      normalized: normalizeSearchText(field.value),
+    })),
+  };
+}
+
+function snippetParts(rawValue = '', query = '') {
+  const value = String(rawValue || '').replace(/\s+/g, ' ').trim();
+  const normalizedQuery = normalizeSearchText(query);
+  if (!value || !normalizedQuery) return [];
+  const index = value.toLowerCase().indexOf(normalizedQuery);
+  if (index < 0) return [{ text: value.slice(0, 180), match: false }];
+  const start = Math.max(0, index - 52);
+  const end = Math.min(value.length, index + normalizedQuery.length + 90);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < value.length ? '...' : '';
+  return [
+    { text: `${prefix}${value.slice(start, index)}`, match: false },
+    { text: value.slice(index, index + normalizedQuery.length), match: true },
+    { text: `${value.slice(index + normalizedQuery.length, end)}${suffix}`, match: false },
+  ].filter((part) => part.text);
+}
+
+export function searchMatchForPage(page = {}, query = '', scope = 'all') {
+  const normalizedQuery = normalizeSearchText(query);
+  const document = buildPageSearchDocument(page, scope);
+  if (!normalizedQuery) return { matched: true, fieldLabel: '', parts: [] };
+  const field = document.fields.find((item) => item.normalized.includes(normalizedQuery));
+  if (!field) return { matched: false, fieldLabel: '', parts: [] };
+  return {
+    matched: true,
+    fieldLabel: field.label,
+    parts: snippetParts(field.value, query),
+  };
+}
 function hasDiscoveryMarkers(page = {}) {
   return Boolean(
     page.discovery
@@ -118,7 +469,7 @@ export function sourceTypeForPage(page = {}) {
   if (['discovery', 'scraped', 'auto', 'automatic', 'auto-discovered', 'scholarly-api'].includes(explicit)) return SOURCE_TYPES.discovery;
 
   const modelEntryType = lower(page.entryType);
-  if (['manual', 'user-created'].includes(modelEntryType)) return SOURCE_TYPES.manual;
+  if (['manual', 'user-created', TECHNOLOGY_ENTRY_TYPE].includes(modelEntryType)) return SOURCE_TYPES.manual;
   if (['scraped', 'discovery', 'auto-discovered'].includes(modelEntryType)) return SOURCE_TYPES.discovery;
 
   const rawOrigin = lower(page.origin || page.createdOrigin);
@@ -257,6 +608,7 @@ export function entryPagesToHtml(pages = []) {
 }
 
 export function entryTypeForPage(page = {}) {
+  if (isTechnologyEntry(page)) return TECHNOLOGY_ENTRY_TYPE;
   const category = lower(page.category);
   const haystack = lower([page.category, page.title, page.summary, ...(page.tags || [])].filter(Boolean).join(' '));
   if (category.includes('diary') || haystack.includes('diary')) return 'diary';
@@ -297,6 +649,7 @@ export function entryTypeLabel(type = '') {
     paper: 'Research Paper',
     book: 'Book',
     'secure-note': 'Secure Note',
+    technology: 'Technology',
   })[type] || 'Note';
 }
 
@@ -313,10 +666,13 @@ export function normalizePage(page = {}) {
   const shareEnabled = Boolean(page.shareEnabled || (visibility !== 'private' && page.shareId));
   const needsOriginReview = page.needsOriginReview ?? (!rawOrigin && !inferredDiscovery && !hasSharedInboxMarkers(page));
   const savedOriginalOrigin = normalizeOrigin(page.originalOrigin || page.discovery?.origin || page.createdOrigin || 'auto-discovered', page);
-
-  return {
+  const pages = getEntryPages(page);
+  const techDetails = isTechnologyEntry(page) ? normalizeTechDetails(page.techDetails) : null;
+  const entryType = page.entryType || entryTypeForPage({ ...page, origin, techDetails });
+  const normalized = {
     ...page,
-    pages: getEntryPages(page),
+    pages,
+    ...(techDetails ? { techDetails } : {}),
     origin,
     createdOrigin: normalizeOrigin(page.createdOrigin || origin, { ...page, origin }),
     originalOrigin: page.originalOrigin || (origin === 'saved-discovery' ? (savedOriginalOrigin === 'saved-discovery' ? 'auto-discovered' : savedOriginalOrigin) : null),
@@ -332,7 +688,13 @@ export function normalizePage(page = {}) {
     shareCreatedAt: page.shareCreatedAt || null,
     shareExpiresAt: page.shareExpiresAt || null,
     needsOriginReview: Boolean(needsOriginReview),
-    entryType: page.entryType || entryTypeForPage({ ...page, origin }),
+    entryType,
+  };
+  const searchText = buildPageSearchDocument(normalized).text;
+
+  return {
+    ...normalized,
+    searchText,
     __needsOriginMigration: page.origin !== origin
       || typeof page.createdByUser !== 'boolean'
       || page.sourceType !== sourceType
@@ -340,6 +702,7 @@ export function normalizePage(page = {}) {
       || typeof page.archived !== 'boolean'
       || typeof page.visibility !== 'string'
       || typeof page.shareEnabled !== 'boolean'
+      || (entryType === TECHNOLOGY_ENTRY_TYPE && page.entryType !== TECHNOLOGY_ENTRY_TYPE)
       || !Object.prototype.hasOwnProperty.call(page, 'archivedAt')
       || !Object.prototype.hasOwnProperty.call(page, 'archivedReason')
       || !Object.prototype.hasOwnProperty.call(page, 'shareId')
@@ -349,7 +712,7 @@ export function normalizePage(page = {}) {
 }
 
 export function stripRuntimePageFields(page = {}) {
-  const { __needsOriginMigration, entryType, ...rest } = page;
+  const { __needsOriginMigration, ...rest } = page;
   return rest;
 }
 
@@ -378,6 +741,8 @@ export function buildOriginMigrationPatch(page = {}) {
     createdOrigin: normalized.createdOrigin,
     sourceType: normalized.sourceType,
     createdByUser: normalized.createdByUser,
+    entryType: normalized.entryType,
+    searchText: normalized.searchText,
     isArchived: normalized.isArchived,
     archived: normalized.archived,
     archivedAt: normalized.archivedAt,
@@ -435,6 +800,7 @@ export function pageMatchesFocusCategory(page = {}, focus = '') {
   const type = entryTypeForPage(page);
   const textValue = lower([page.category, page.title, page.summary, ...(page.tags || [])].filter(Boolean).join(' '));
   switch (focus) {
+    case 'tech-reference': return type === TECHNOLOGY_ENTRY_TYPE;
     case 'diary': return type === 'diary';
     case 'ideas': return type === 'paper-idea';
     case 'project-ideas':
@@ -547,6 +913,8 @@ export function buildPublicSharePayload(page = {}, options = {}) {
     title: normalized.secure ? 'Encrypted note' : (normalized.title || 'Shared entry'),
     category: normalized.secure ? 'Private Vault' : (normalized.category || ''),
     tags: normalized.secure ? [] : (normalized.tags || []).slice(0, 20),
+    entryType: normalized.secure ? 'secure-note' : normalized.entryType,
+    techDetails: !normalized.secure && normalized.entryType === TECHNOLOGY_ENTRY_TYPE ? normalizeTechDetails(normalized.techDetails) : null,
     summary: includeSummary && !normalized.secure ? (normalized.summary || '') : '',
     html: includeFull && !normalized.secure ? entryPagesToHtml(pages) : '',
     pages: includeFull && !normalized.secure ? pages : [],

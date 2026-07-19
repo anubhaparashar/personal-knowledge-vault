@@ -29,6 +29,7 @@ import {
   Search,
   Share2,
   Trash2,
+  Wrench,
   XCircle,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
@@ -72,6 +73,7 @@ import { daysUntilDate, formatDetectedDate, isCalendarImportantDate, selectNextI
 import { buildResearchDateEvents, sortResearchPages } from '../utils/researchDates';
 import { entryTypeForFocus, openManualEntry } from '../utils/manualEntry';
 import {
+  buildPageSearchDocument,
   entryPagesToHtml,
   entryTypeForPage,
   entryTypeLabel,
@@ -86,6 +88,13 @@ import {
   pageMatchesOriginFilter,
   pageMatchesSection,
   pageMatchesType,
+  normalizeTechDetails,
+  searchMatchForPage,
+  TECH_REFERENCE_CATEGORIES,
+  TECH_STATUS_OPTIONS,
+  TECHNOLOGY_ENTRY_TYPE,
+  technologyStatusLabel,
+  technologyStatusTone,
   savedDiscoveryPatch,
 } from '../utils/pageModel';
 
@@ -105,6 +114,7 @@ const WORKSPACE_CARDS = [
   { key: 'Papers', label: 'Research Papers and Reading Notes', icon: FileText, href: '#/papers', description: 'Reading notes and literature', terms: ['paper', 'study', 'literature', 'reading note'] },
   { key: 'Fellowships', label: 'Fellowships and Grants', icon: Landmark, href: '#/fellowships', description: 'Fellowships, awards and grants', terms: ['fellowship', 'grant', 'funding call'] },
   { key: 'Applications', label: 'Applications', icon: ClipboardCheck, href: '#/applications', description: 'Submitted and draft applications', terms: ['application', 'apply', 'statement of purpose', 'cover letter'] },
+  { key: 'TechReference', label: 'Tech Reference', icon: Wrench, href: '#/tech-reference', description: 'Reusable notes about platforms, tools and services', terms: ['tech reference', 'technology reference', 'cloudflare', 'firebase', 'react', 'docker', 'dns'] },
 ];
 
 const DEADLINE_SCOPE_FILTERS = ['All', 'Scholarships', 'Postdoctoral', 'Conferences', 'Journals', 'Jobs/Fellowships'];
@@ -141,6 +151,7 @@ const MY_ENTRY_TYPE_OPTIONS = [
   { value: 'project-idea', label: 'Project Idea' },
   { value: 'proposal', label: 'Proposal' },
   { value: 'application', label: 'Application' },
+  { value: 'technology', label: 'Technology' },
 ];
 const ARCHIVE_TABS = [
   { value: 'all', label: 'All Archived' },
@@ -184,6 +195,7 @@ const FOCUS_LABELS = {
   books: 'Books and Reading',
   'secure-notes': 'Secure Notes',
   proposals: 'Project Proposals',
+  'tech-reference': 'Tech Reference',
 };
 
 function readSessionSet(key) {
@@ -214,12 +226,8 @@ function statusForDeadline(deadline, days) {
 function deadlineTone(status) {
   return normalize(status).replace(/\s+/g, '-');
 }
-function entryPagesText(page) {
-  if (page.secure) return '';
-  return htmlToText(entryPagesToHtml(getEntryPages(page)));
-}
 function summarizeText(page) {
-  return [page.title, page.summary, page.plainText, entryPagesText(page), page.category, page.sourceDomain, page.sourceTitle, page.sourceUrl, ...(page.tags || [])].filter(Boolean).join(' ');
+  return buildPageSearchDocument(page).text;
 }
 function categoryCount(page, card) {
   const source = normalize(summarizeText(page));
@@ -268,12 +276,20 @@ function attachmentIsPdf(file = {}) {
   return normalize(file.mimeType || file.type).includes('pdf') || normalize(file.name || file.originalName || file.fileName).endsWith('.pdf');
 }
 function sourceForScope(page, scope) {
-  if (scope === 'titles') return page.title || '';
-  if (scope === 'content') return [page.plainText, page.summary, entryPagesText(page)].filter(Boolean).join(' ');
-  if (scope === 'categories') return page.category || '';
-  if (scope === 'tags') return (page.tags || []).join(' ');
-  if (scope === 'sources') return [page.sourceUrl, page.sourceDomain, page.sourceTitle].filter(Boolean).join(' ');
-  return page.secure ? 'locked note private vault' : summarizeText(page);
+  return buildPageSearchDocument(page, scope).text;
+}
+function HighlightedSearchMatch({ match }) {
+  if (!match?.fieldLabel || !match.parts?.length) return null;
+  return (
+    <div className="search-match-snippet">
+      <span>Matched in: {match.fieldLabel}</span>
+      <p>{match.parts.map((part, index) => (part.match ? <mark key={`${part.text}-${index}`}>{part.text}</mark> : <React.Fragment key={`${part.text}-${index}`}>{part.text}</React.Fragment>))}</p>
+    </div>
+  );
+}
+
+function uniqueSorted(values = []) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 function filterLabel(value) {
   if (value.startsWith('category:')) return value.replace('category:', 'Category: ');
@@ -329,6 +345,12 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const [selectedPageIds, setSelectedPageIds] = useState(() => new Set());
   const [sharePage, setSharePage] = useState(null);
   const [dashboardTab, setDashboardTab] = useState('my-work');
+  const [techSearch, setTechSearch] = useState('');
+  const [techCategoryFilter, setTechCategoryFilter] = useState('all');
+  const [techProjectFilter, setTechProjectFilter] = useState('all');
+  const [techStatusFilter, setTechStatusFilter] = useState('all');
+  const [techTagFilter, setTechTagFilter] = useState('all');
+  const [techSortMode, setTechSortMode] = useState('updated-desc');
 
   useEffect(() => { localStorage.setItem(LIBRARY_SEARCH_KEY, search); }, [search]);
   useEffect(() => { localStorage.setItem(LIBRARY_VIEW_KEY, viewMode); }, [viewMode]);
@@ -361,6 +383,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
   const archivedPages = useMemo(() => normalizedPages.filter((page) => isArchivedPage(page)), [normalizedPages]);
   const myEntryPages = useMemo(() => activePages.filter(isMyEntry), [activePages]);
   const discoveryPages = useMemo(() => activePages.filter(isDiscoveryRecord), [activePages]);
+  const technologyPages = useMemo(() => activePages.filter((page) => isMyEntry(page) && entryTypeForPage(page) === TECHNOLOGY_ENTRY_TYPE), [activePages]);
   const researchEvents = useMemo(() => buildResearchDateEvents(activePages, { includeDerived: true }), [activePages]);
 
   const deadlines = useMemo(() => activePages
@@ -413,6 +436,36 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     return map;
   }, [activePages]);
 
+  const techFilterData = useMemo(() => {
+    const categories = uniqueSorted([
+      ...TECH_REFERENCE_CATEGORIES,
+      ...technologyPages.map((page) => normalizeTechDetails(page.techDetails).technologyCategory),
+    ]);
+    const projects = uniqueSorted(technologyPages.flatMap((page) => normalizeTechDetails(page.techDetails).projects.map((project) => project.projectName)));
+    const tags = uniqueSorted(technologyPages.flatMap((page) => page.tags || []));
+    return { categories, projects, tags };
+  }, [technologyPages]);
+
+  const filteredTechnologyPages = useMemo(() => {
+    const q = techSearch.trim();
+    const filtered = technologyPages.filter((page) => {
+      const details = normalizeTechDetails(page.techDetails);
+      if (techCategoryFilter !== 'all' && details.technologyCategory !== techCategoryFilter) return false;
+      if (techProjectFilter !== 'all' && !details.projects.some((project) => project.projectName === techProjectFilter)) return false;
+      if (techStatusFilter !== 'all' && details.status !== techStatusFilter) return false;
+      if (techTagFilter !== 'all' && !(page.tags || []).some((tag) => normalize(tag) === normalize(techTagFilter))) return false;
+      return !q || searchMatchForPage(page, q).matched;
+    });
+    return [...filtered].sort((a, b) => {
+      if (techSortMode === 'title-asc') {
+        const aName = normalizeTechDetails(a.techDetails).canonicalName || a.title || '';
+        const bName = normalizeTechDetails(b.techDetails).canonicalName || b.title || '';
+        return aName.localeCompare(bName);
+      }
+      return sortByUpdated(a, b);
+    });
+  }, [techCategoryFilter, techProjectFilter, techSearch, techSortMode, techStatusFilter, techTagFilter, technologyPages]);
+
   const tags = useMemo(() => {
     const map = new Map();
     activePages.forEach((page) => (page.tags || []).forEach((tag) => map.set(tag, (map.get(tag) || 0) + 1)));
@@ -443,7 +496,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     { icon: Archive, value: archivedPages.length, label: 'Archived', helper: 'Hidden, not deleted' },
   ], [archivedPages.length, deadlines, discoveryPages.length, myEntryPages.length]);
 
-  const workspaceCounts = useMemo(() => new Map(WORKSPACE_CARDS.map((card) => [card.key, myEntryPages.filter((page) => categoryCount(page, card)).length])), [myEntryPages]);
+  const workspaceCounts = useMemo(() => new Map(WORKSPACE_CARDS.map((card) => [card.key, card.key === 'TechReference' ? technologyPages.length : myEntryPages.filter((page) => categoryCount(page, card)).length])), [myEntryPages, technologyPages]);
 
   const filteredPages = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -488,7 +541,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
       if (filterValue === 'deadline:due-today' && deadline?.days !== 0) return false;
       if (filterValue === 'deadline:due-soon' && !(deadline && deadline.days > 0 && deadline.days <= 7)) return false;
       if (filterValue === 'deadline:overdue' && !(deadline && deadline.days < 0)) return false;
-      if (q && !normalize(sourceForScope(page, searchScope)).includes(q)) return false;
+      if (q && !searchMatchForPage(page, q, searchScope).matched) return false;
       return true;
     });
 
@@ -799,6 +852,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           const shareable = isShareEnabledPage(normalizedPage);
           const discoveredAt = normalizedPage.discoveredAt || normalizedPage.discovery?.firstDiscoveredAt || normalizedPage.createdAt;
           const selected = selectedPageIds.has(normalizedPage.id);
+          const searchMatch = search.trim() ? searchMatchForPage(normalizedPage, search, searchScope) : null;
           return (
             <article key={normalizedPage.id} className={`note-card ${normalizedPage.secure ? 'secure-note' : ''} ${archived ? 'is-archived' : ''}`}>
               {allowSelection ? (
@@ -819,6 +873,7 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
               </div>
               <h3>{normalizedPage.secure ? 'Locked entry' : normalizedPage.title || 'Untitled entry'}</h3>
               <p>{preview}</p>
+              <HighlightedSearchMatch match={searchMatch} />
               {discovery ? (
                 <div className="note-discovery-meta compact">
                   <span>Source: {normalizedPage.discovery?.sourceName || normalizedPage.sourceDomain || 'Official source'}</span>
@@ -861,6 +916,82 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
     );
   }
 
+  function renderTechReferenceDashboard() {
+    return (
+      <AppShell title="Tech Reference">
+        <div className="dashboard-stack tech-reference-page">
+          {renderSyncMessage()}
+          {loading ? <div className="skeleton-panel"><span /><span /><span /></div> : null}
+          <SectionPanel eyebrow="TECH REFERENCE" title="Technology reference" actions={(
+            <>
+              <Badge>{filteredTechnologyPages.length} shown</Badge>
+              <PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton>
+            </>
+          )}>
+            <div className="tech-reference-toolbar" role="search">
+              <label className="search-control tech-search-control">
+                <Search size={18} strokeWidth={1.9} aria-hidden="true" />
+                <span className="sr-only">Search Tech Reference</span>
+                <input value={techSearch} onChange={(event) => setTechSearch(event.target.value)} placeholder="Search technologies, aliases, projects, setup notes and problems..." />
+              </label>
+              <label className="select-control"><span>Category</span><select value={techCategoryFilter} onChange={(event) => setTechCategoryFilter(event.target.value)}><option value="all">All</option>{techFilterData.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+              <label className="select-control"><span>Project</span><select value={techProjectFilter} onChange={(event) => setTechProjectFilter(event.target.value)}><option value="all">All</option>{techFilterData.projects.map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
+              <label className="select-control"><span>Status</span><select value={techStatusFilter} onChange={(event) => setTechStatusFilter(event.target.value)}><option value="all">All</option>{TECH_STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></label>
+              <label className="select-control"><span>Tag</span><select value={techTagFilter} onChange={(event) => setTechTagFilter(event.target.value)}><option value="all">All</option>{techFilterData.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
+              <label className="select-control"><span>Sort</span><select value={techSortMode} onChange={(event) => setTechSortMode(event.target.value)}><option value="updated-desc">Recently updated</option><option value="title-asc">A-Z</option></select></label>
+            </div>
+
+            <div className="note-library is-grid tech-reference-grid">
+              {filteredTechnologyPages.map((page) => {
+                const details = normalizeTechDetails(page.techDetails);
+                const projects = details.projects.filter((project) => project.projectName || project.purpose);
+                const usedFor = details.mainPurpose || details.whyUsed || projects.map((project) => project.purpose).filter(Boolean).join('; ') || 'No usage summary yet.';
+                const techMatch = techSearch.trim() ? searchMatchForPage(page, techSearch) : null;
+                const shareable = isShareEnabledPage(page);
+                return (
+                  <article key={page.id} className="note-card tech-reference-card">
+                    <div className="note-card-head">
+                      <span className="category-pill">{details.technologyCategory || page.category || 'Other'}</span>
+                      <div className="note-meta-row">
+                        <Badge tone={technologyStatusTone(details.status)}>{technologyStatusLabel(details.status)}</Badge>
+                        {shareable ? <Badge tone="completed">Shareable</Badge> : null}
+                      </div>
+                    </div>
+                    <h3>{details.canonicalName || page.title || 'Untitled technology'}</h3>
+                    {details.shortDefinition || page.summary ? <p>{details.shortDefinition || page.summary}</p> : null}
+                    <dl className="tech-card-facts">
+                      {usedFor ? <div><dt>Used for</dt><dd>{usedFor}</dd></div> : null}
+                      {projects.length ? <div><dt>Projects</dt><dd>{projects.map((project) => project.projectName || project.purpose).filter(Boolean).join(', ')}</dd></div> : null}
+                    </dl>
+                    {page.tags?.length ? <div className="tag-row">{page.tags.slice(0, 8).map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
+                    <HighlightedSearchMatch match={techMatch} />
+                    <div className="note-card-foot">
+                      <small>Updated {formatDate(page.updatedAt)}</small>
+                      <div className="note-actions">
+                        <NoteAction icon={Eye} onClick={() => window.location.hash = `#/read/${page.id}`}>Open</NoteAction>
+                        <NoteAction icon={Edit3} onClick={() => window.location.hash = `#/edit/${page.id}`}>Edit</NoteAction>
+                        <NoteAction icon={Share2} onClick={() => setSharePage(page)}>{shareable ? 'Share link' : 'Make shareable'}</NoteAction>
+                        <NoteAction icon={Archive} onClick={() => toggleArchive(page)}>Archive</NoteAction>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+              {!filteredTechnologyPages.length ? (
+                <EmptyState icon={Wrench} title="No technology references yet" actions={<PrimaryButton onClick={() => openManualEntry('technology')}><Plus size={17} /> Add Technology</PrimaryButton>}>
+                  Add reusable notes for tools, platforms, libraries and services used across projects.
+                </EmptyState>
+              ) : null}
+            </div>
+          </SectionPanel>
+        </div>
+        <ShareEntryDialog page={sharePage} open={Boolean(sharePage)} onClose={() => setSharePage(null)} />
+      </AppShell>
+    );
+  }
+
+  if (focus === 'tech-reference') return renderTechReferenceDashboard();
+
   if (focus === 'overview') {
     return (
       <AppShell title="Dashboard">
@@ -875,6 +1006,12 @@ export default function DashboardPage({ pages, pdfs = [], loading, error, focus 
           <div className="dashboard-tab-row">
             <SegmentedControl ariaLabel="Dashboard tabs" options={DASHBOARD_TABS} value={dashboardTab} onChange={setDashboardTab} />
           </div>
+
+          <SectionPanel eyebrow="WORKSPACES" title="Vault sections">
+            <div className="workspace-card-grid">
+              {WORKSPACE_CARDS.map((card) => <WorkspaceCard key={card.key} icon={card.icon} title={card.label} count={workspaceCounts.get(card.key) || 0} description={card.description} href={card.href} />)}
+            </div>
+          </SectionPanel>
 
           {dashboardTab === 'my-work' ? (
             <SectionPanel eyebrow="MY WORK" title="Recent entries" actions={<Badge>{myEntryPages.length} total</Badge>}>

@@ -42,11 +42,21 @@ import { detectExternalUrls, readAutoEnrichPastedLinksMode } from '../utils/sour
 import { categoryEntryType, PRELOAD_KEY as EDITOR_PRELOAD_KEY } from '../utils/manualEntry';
 import {
   MAIN_ENTRY_PAGE_ID,
+  TECHNOLOGY_ENTRY_TYPE,
+  TECH_REFERENCE_CATEGORIES,
+  TECH_STATUS_OPTIONS,
+  EMPTY_TECH_USAGE,
+  EMPTY_TECH_TROUBLESHOOTING,
+  buildPageSearchDocument,
+  createEmptyTechDetails,
   createEntryPage,
   entryPagesToHtml,
   getEntryPages,
   getMainPage,
   prepareEntryPagesForSave,
+  hasTechnologyDetails,
+  normalizeStringList,
+  normalizeTechDetails,
   SOURCE_TYPES,
 } from '../utils/pageModel';
 import {
@@ -298,7 +308,21 @@ function hasOpportunityDetails(details = {}) {
   return Object.values(details || {}).some((value) => String(value || '').trim());
 }
 
-function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}, entryPages = []) {
+function listToText(values = []) {
+  return normalizeStringList(values).join(', ');
+}
+
+function techCategoryPath(category = '') {
+  const clean = String(category || '').trim();
+  return clean ? `Tech Reference/${clean}` : 'Tech Reference';
+}
+
+function categoryFromTechPath(category = '') {
+  const value = String(category || '').trim();
+  return value.toLowerCase().startsWith('tech reference/') ? value.split('/').slice(1).join('/').trim() : '';
+}
+
+function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails = {}, entryPages = [], techDetails = {}) {
   const pagesText = entryPages.length ? htmlToText(entryPagesToHtml(entryPages)) : '';
   return Boolean(
     form.title.trim()
@@ -312,7 +336,8 @@ function hasDraftContent(form, attachments, inlineFiles, importantDates, sourceM
     || inlineFiles.length
     || importantDates.length
     || hasSourceMetadata(sourceMetadata)
-    || hasOpportunityDetails(opportunityDetails),
+    || hasOpportunityDetails(opportunityDetails)
+    || hasTechnologyDetails(techDetails),
   );
 }
 
@@ -462,6 +487,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const [sourceImportPreview, setSourceImportPreview] = useState(null);
   const [detectedSourceUrls, setDetectedSourceUrls] = useState([]);
   const [opportunityDetails, setOpportunityDetails] = useState(EMPTY_OPPORTUNITY_DETAILS);
+  const [techDetails, setTechDetails] = useState(() => createEmptyTechDetails());
+  const [entryTypeId, setEntryTypeId] = useState('');
   const [recordOrigin, setRecordOrigin] = useState('manual');
   const [importantDates, setImportantDates] = useState([]);
   const [autoCategory, setAutoCategory] = useState({ category: '', confidence: 0 });
@@ -501,6 +528,10 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   const selectedEntryPageIndex = useMemo(() => (
     Math.max(0, entryPages.findIndex((page) => page.pageId === selectedEntryPage?.pageId))
   ), [entryPages, selectedEntryPage?.pageId]);
+  const isTechnologyDraft = entryTypeId === TECHNOLOGY_ENTRY_TYPE
+    || existing?.entryType === TECHNOLOGY_ENTRY_TYPE
+    || form.category.trim().toLowerCase().startsWith('tech reference')
+    || hasTechnologyDetails(techDetails);
 
   useEffect(() => {
     function updateConnectionStatus() {
@@ -563,6 +594,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = preload?.sourceUrl || '';
       setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(preload?.opportunityDetails || {}) });
+      setTechDetails(normalizeTechDetails(preload?.techDetails || {}));
+      setEntryTypeId(preload?.entryType || preload?.entryTypeId || '');
       setRecordOrigin(preload?.origin || 'manual');
       setImportantDates(preload?.importantDates || []);
       setSecure(Boolean(preload?.secure));
@@ -605,6 +638,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = '';
       setOpportunityDetails(EMPTY_OPPORTUNITY_DETAILS);
+      setTechDetails(createEmptyTechDetails());
+      setEntryTypeId(existing.entryType || '');
       setRecordOrigin(existing.origin || existing.createdOrigin || 'manual');
       setImportantDates([]);
       setAttachments([]);
@@ -629,6 +664,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setDetectedSourceUrls([]);
       autoEnrichedSourceRef.current = existing.sourceUrl || existing.sourceMetadata?.originalUrl || '';
       setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(existing.opportunityDetails || {}) });
+      setTechDetails(normalizeTechDetails(existing.techDetails || {}));
+      setEntryTypeId(existing.entryType || existing.entryTypeId || '');
       setRecordOrigin(existing.origin || existing.createdOrigin || 'manual');
       const migratedDates = migrateLegacyPageDates(existing);
       setImportantDates(migratedDates.importantDates || existing.importantDates || []);
@@ -650,7 +687,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     if (!draftAutosaveReady || !hasLocalChanges) return undefined;
 
     const timeoutId = window.setTimeout(() => {
-      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails, entryPages)) {
+      if (!hasDraftContent(form, attachments, inlineFiles, importantDates, sourceMetadata, opportunityDetails, entryPages, techDetails)) {
         clearStoredDraft(draftKey);
         setDraftSavedAt(null);
         return;
@@ -670,6 +707,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         importantDates,
         sourceMetadata,
         opportunityDetails,
+        techDetails,
+        entryTypeId,
         recordOrigin,
         categoryManuallyEdited,
         savedAt,
@@ -678,10 +717,10 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     }, DRAFT_SAVE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, entryPages, form, hasLocalChanges, importantDates, inlineFiles, opportunityDetails, pageId, recordOrigin, routeId, secure, selectedEntryPageId, sourceMetadata]);
+  }, [attachments, categoryManuallyEdited, draftAutosaveReady, draftKey, entryPages, entryTypeId, form, hasLocalChanges, importantDates, inlineFiles, opportunityDetails, pageId, recordOrigin, routeId, secure, selectedEntryPageId, sourceMetadata, techDetails]);
 
   useEffect(() => {
-    if (!unlocked || !hasLocalChanges) return undefined;
+    if (!unlocked || !hasLocalChanges || isTechnologyDraft) return undefined;
     const timeoutId = window.setTimeout(() => {
       const metadata = generateSmartMetadata({
         pageId,
@@ -722,7 +761,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setImportantDates((current) => mergeImportantDates(current, metadata.importantDates, pageId));
     }, 900);
     return () => window.clearTimeout(timeoutId);
-  }, [attachments, categoryManuallyEdited, form.category, form.html, form.sourceUrl, form.summary, form.tagsText, form.title, hasLocalChanges, pageId, sourceMetadata, unlocked]);
+  }, [attachments, categoryManuallyEdited, form.category, form.html, form.sourceUrl, form.summary, form.tagsText, form.title, hasLocalChanges, isTechnologyDraft, pageId, sourceMetadata, unlocked]);
 
   useEffect(() => {
     if (!unlocked || secure) return undefined;
@@ -824,6 +863,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       importantDates,
       sourceMetadata,
       opportunityDetails,
+      techDetails,
+      entryTypeId,
       recordOrigin,
       categoryManuallyEdited,
       savedAt,
@@ -903,6 +944,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
   function updateCategory(value) {
     setCategoryManuallyEdited(true);
+    if (value.trim().toLowerCase().startsWith('tech reference')) setEntryTypeId(TECHNOLOGY_ENTRY_TYPE);
     update('category', value);
   }
 
@@ -914,6 +956,96 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
   function updateOpportunityDetail(name, value) {
     markDirty();
     setOpportunityDetails((current) => ({ ...current, [name]: value }));
+  }
+
+  function activateTechnologyEntry() {
+    setEntryTypeId(TECHNOLOGY_ENTRY_TYPE);
+  }
+
+  function updateTechnologyName(value) {
+    activateTechnologyEntry();
+    markDirty();
+    setForm((current) => ({ ...current, title: value }));
+    setTechDetails((current) => ({ ...current, canonicalName: value }));
+  }
+
+  function updateTechDetail(name, value) {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => ({ ...current, [name]: value }));
+  }
+
+  function updateTechList(name, value) {
+    updateTechDetail(name, normalizeStringList(value));
+  }
+
+  function updateTechCategory(value) {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => ({ ...current, technologyCategory: value }));
+    setForm((current) => {
+      const shouldSync = !current.category.trim() || current.category.toLowerCase().startsWith('tech reference');
+      return shouldSync ? { ...current, category: techCategoryPath(value) } : current;
+    });
+    setCategoryManuallyEdited(true);
+  }
+
+  function addTechnologyUsage() {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => ({ ...current, projects: [...(current.projects || []), { ...EMPTY_TECH_USAGE }] }));
+  }
+
+  function updateTechnologyUsage(index, field, value) {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => {
+      const projects = [...(current.projects || [])];
+      projects[index] = {
+        ...EMPTY_TECH_USAGE,
+        ...(projects[index] || {}),
+        [field]: field === 'servicesUsed' ? normalizeStringList(value) : value,
+      };
+      return { ...current, projects };
+    });
+  }
+
+  function removeTechnologyUsage(index) {
+    markDirty();
+    setTechDetails((current) => ({ ...current, projects: (current.projects || []).filter((_, itemIndex) => itemIndex !== index) }));
+  }
+
+  function addTechTroubleshooting() {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => ({ ...current, troubleshooting: [...(current.troubleshooting || []), { ...EMPTY_TECH_TROUBLESHOOTING }] }));
+  }
+
+  function updateTechTroubleshooting(index, field, value) {
+    activateTechnologyEntry();
+    markDirty();
+    setTechDetails((current) => {
+      const troubleshooting = [...(current.troubleshooting || [])];
+      troubleshooting[index] = { ...EMPTY_TECH_TROUBLESHOOTING, ...(troubleshooting[index] || {}), [field]: value };
+      return { ...current, troubleshooting };
+    });
+  }
+
+  function removeTechTroubleshooting(index) {
+    markDirty();
+    setTechDetails((current) => ({ ...current, troubleshooting: (current.troubleshooting || []).filter((_, itemIndex) => itemIndex !== index) }));
+  }
+
+  function finalTechDetailsSnapshot() {
+    const normalized = normalizeTechDetails(techDetails);
+    const fallbackCategory = normalized.technologyCategory || categoryFromTechPath(form.category) || 'Other';
+    return normalizeTechDetails({
+      ...normalized,
+      canonicalName: normalized.canonicalName || form.title.trim(),
+      technologyCategory: fallbackCategory,
+      officialUrl: normalized.officialUrl || form.sourceUrl.trim(),
+      shortDefinition: normalized.shortDefinition || form.summary.trim(),
+    });
   }
 
   const updateUploadRow = (localId, patch) => {
@@ -1136,6 +1268,9 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setSourceEnrichment(sourceEnrichmentFromMetadata(decrypted.sourceMetadata || EMPTY_SOURCE_METADATA, decrypted.sourceUrl || ''));
     setDetectedSourceUrls([]);
     autoEnrichedSourceRef.current = decrypted.sourceUrl || decrypted.sourceMetadata?.originalUrl || '';
+    setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(decrypted.opportunityDetails || {}) });
+    setTechDetails(normalizeTechDetails(decrypted.techDetails || {}));
+    setEntryTypeId(decrypted.entryType || existing.entryType || '');
     setImportantDates(decrypted.importantDates || []);
     setPassphrase(value);
     setUnlocked(true);
@@ -1737,6 +1872,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     setDetectedSourceUrls([]);
     autoEnrichedSourceRef.current = draftPrompt.form?.sourceUrl || draftPrompt.sourceMetadata?.originalUrl || '';
     setOpportunityDetails({ ...EMPTY_OPPORTUNITY_DETAILS, ...(draftPrompt.opportunityDetails || {}) });
+    setTechDetails(normalizeTechDetails(draftPrompt.techDetails || {}));
+    setEntryTypeId(draftPrompt.entryTypeId || draftPrompt.entryType || '');
     setRecordOrigin(draftPrompt.recordOrigin || 'manual');
     setCategoryManuallyEdited(Boolean(draftPrompt.categoryManuallyEdited));
     setUploadRows([]);
@@ -1891,28 +2028,45 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     const draftPages = currentEntryPagesSnapshot();
     const metadataHtml = entryPagesToHtml(draftPages);
     const plainText = htmlToText(metadataHtml);
-    const generated = generateSmartMetadata({
-      pageId,
-      title: form.title,
-      html: metadataHtml,
-      sourceUrl: form.sourceUrl,
-      summary: form.summary,
-      tagsText: form.tagsText,
-      sourceMetadata,
-      category: form.category,
-      tags: splitTagsText(form.tagsText),
-      fileName: attachments.map((item) => item.name || item.originalName).filter(Boolean).join(' '),
-    });
+    const savingTechnologyEntry = isTechnologyDraft || entryTypeId === TECHNOLOGY_ENTRY_TYPE || hasTechnologyDetails(techDetails);
+    const finalizedTechDetails = savingTechnologyEntry ? finalTechDetailsSnapshot() : null;
+    const techSummary = finalizedTechDetails?.shortDefinition || finalizedTechDetails?.mainPurpose || finalizedTechDetails?.whyUsed || '';
+    const generated = savingTechnologyEntry
+      ? {
+        category: techCategoryPath(finalizedTechDetails?.technologyCategory || 'Other'),
+        categoryConfidence: 1,
+        tags: [],
+        summary: cleanVisibleText(form.summary || techSummary || plainText.slice(0, 240)),
+        importantDates: [],
+      }
+      : generateSmartMetadata({
+        pageId,
+        title: form.title,
+        html: metadataHtml,
+        sourceUrl: form.sourceUrl,
+        summary: form.summary,
+        tagsText: form.tagsText,
+        sourceMetadata,
+        category: form.category,
+        tags: splitTagsText(form.tagsText),
+        fileName: attachments.map((item) => item.name || item.originalName).filter(Boolean).join(' '),
+      });
     const tags = mergeTags(splitTagsText(form.tagsText), generated.tags);
-    const selectedCategory = form.category.trim() || generated.category || 'Uncategorised';
-    const summary = cleanVisibleText(form.summary || generated.summary || plainText.slice(0, 240));
-    const mergedDates = mergeImportantDates(importantDates, generated.importantDates, pageId);
+    const saveTitle = cleanVisibleText(form.title || finalizedTechDetails?.canonicalName || '');
+    const saveSourceUrl = cleanVisibleText(form.sourceUrl || finalizedTechDetails?.officialUrl || '');
+    const selectedCategory = form.category.trim()
+      || (savingTechnologyEntry ? techCategoryPath(finalizedTechDetails?.technologyCategory || 'Other') : generated.category)
+      || 'Uncategorised';
+    const summary = cleanVisibleText(form.summary || techSummary || generated.summary || plainText.slice(0, 240));
+    const mergedDates = savingTechnologyEntry ? importantDates : mergeImportantDates(importantDates, generated.importantDates, pageId);
     const dates = finalImportantDates(mergedDates);
-    setLastDetectedDates(generated.importantDates);
+    setLastDetectedDates(savingTechnologyEntry ? [] : generated.importantDates);
     setImportantDates(dates);
 
-    if (!form.title.trim()) return setMessage('Add a title.');
-    if (!plainText && !attachments.length && !dates.length && !hasOpportunityDetails(opportunityDetails)) return setMessage('Add content, an important date, structured details or an attachment.');
+    if (!saveTitle) return setMessage('Add a title.');
+    if (!plainText && !attachments.length && !dates.length && !hasOpportunityDetails(opportunityDetails) && !(savingTechnologyEntry && hasTechnologyDetails(finalizedTechDetails))) {
+      return setMessage('Add content, an important date, structured details or an attachment.');
+    }
     if (secure && (attachments.length || inlineFiles.length || uploadRows.some((row) => row.storagePath || row.file))) return setMessage('Remove attachments before saving an encrypted secure note.');
     if (secure && passphrase.length < 12) return setMessage('Secure notes require a passphrase of at least 12 characters.');
     if (secure && isNew && passphrase !== confirmPassphrase) return setMessage('The two passphrases do not match.');
@@ -1933,6 +2087,15 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       const mainPageForSave = getMainPage({ pages: pagesForSave });
       const allPagesHtml = entryPagesToHtml(pagesForSave);
       const allPagesPlainText = htmlToText(allPagesHtml);
+      const techWikiText = savingTechnologyEntry ? [
+        finalizedTechDetails?.relatedPages,
+        finalizedTechDetails?.references,
+        finalizedTechDetails?.personalNotes,
+        finalizedTechDetails?.setupNotes,
+        finalizedTechDetails?.configurationNotes,
+        finalizedTechDetails?.issuesAndSolutions,
+      ].filter(Boolean).join('\n') : '';
+      const wikiLinks = extractWikiLinks([allPagesPlainText, techWikiText].filter(Boolean).join('\n'));
       const preservedArchived = Boolean(existing?.isArchived || existing?.archived);
       const preservedShareEnabled = Boolean(existing?.shareEnabled || ((existing?.visibility === 'shareable' || existing?.visibility === 'share-link') && existing?.shareId));
       const recordStateFields = {
@@ -1948,14 +2111,17 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
         shareCreatedAt: preservedShareEnabled ? (existing?.shareCreatedAt || null) : null,
         shareExpiresAt: preservedShareEnabled ? (existing?.shareExpiresAt || null) : null,
       };
+      const entryTypeFields = savingTechnologyEntry
+        ? { entryType: TECHNOLOGY_ENTRY_TYPE, techDetails: finalizedTechDetails }
+        : existing?.entryType ? { entryType: existing.entryType } : {};
 
       let data;
       if (secure) {
         const encryption = await encryptObject({
-          title: form.title.trim(),
+          title: saveTitle,
           category: selectedCategory,
           tags,
-          sourceUrl: form.sourceUrl.trim(),
+          sourceUrl: saveSourceUrl,
           summary,
           html: encryptedMainPage?.content || form.html,
           pages: encryptedPages,
@@ -1963,6 +2129,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
           sourceMetadata,
           opportunityDetails,
+          ...entryTypeFields,
           origin: recordOrigin || 'manual',
         }, passphrase);
 
@@ -1986,26 +2153,27 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           createdOrigin: recordOrigin || 'manual',
           ...recordStateFields,
           opportunityDetails: {},
+          ...(savingTechnologyEntry ? { entryType: TECHNOLOGY_ENTRY_TYPE } : {}),
           encryption,
         };
       } else {
         data = {
           secure: false,
           encryption: null,
-          title: form.title.trim(),
+          title: saveTitle,
           category: selectedCategory,
-          categoryAuto: !categoryManuallyEdited,
-          categoryConfidence: autoCategory.confidence || generated.categoryConfidence || 0,
+          categoryAuto: savingTechnologyEntry ? false : !categoryManuallyEdited,
+          categoryConfidence: savingTechnologyEntry ? 1 : autoCategory.confidence || generated.categoryConfidence || 0,
           tags,
-          sourceUrl: form.sourceUrl.trim(),
-          sourceDomain: getSourceDomain(form.sourceUrl.trim()),
+          sourceUrl: saveSourceUrl,
+          sourceDomain: getSourceDomain(saveSourceUrl),
           sourceMetadata,
           summary,
           html: mainPageForSave?.content || '<p></p>',
           content: mainPageForSave?.content || '<p></p>',
           pages: pagesForSave,
           plainText: allPagesPlainText,
-          wikiLinks: extractWikiLinks(allPagesPlainText),
+          wikiLinks,
           importantDates: dates,
           dateAnalysisVersion: DATE_ANALYSIS_VERSION,
           dateAnalysisAt: saveNow,
@@ -2017,10 +2185,12 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
           attachments,
           inlineFiles,
           opportunityDetails,
+          ...entryTypeFields,
           origin: recordOrigin || 'manual',
           createdOrigin: recordOrigin || 'manual',
           ...recordStateFields,
         };
+        data.searchText = buildPageSearchDocument(data).text;
       }
 
       payloadBytes = approximateFirestorePayloadBytes(data, isNew);
@@ -2042,7 +2212,10 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       }
 
       await savePage(user.uid, pageId, data, isNew);
-      if (!secure) setEntryPages(pagesForSave);
+      if (!secure) {
+        setEntryPages(pagesForSave);
+        if (savingTechnologyEntry) setTechDetails(finalizedTechDetails);
+      }
       clearStoredDraft(draftKey);
       setDraftSavedAt(null);
       setHasLocalChanges(false);
@@ -2051,23 +2224,38 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       console.info('[EditorPage] save completed', { uid: user.uid, pageId, approximatePayloadBytes: payloadBytes });
       window.setTimeout(() => {
         if (saveAction === 'save-add-another') {
-          localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify({
+          const nextPreload = savingTechnologyEntry ? {
+            category: selectedCategory,
+            tagsText: tags.join(', '),
+            origin: 'manual',
+            entryType: TECHNOLOGY_ENTRY_TYPE,
+            entryTypeId: TECHNOLOGY_ENTRY_TYPE,
+            techDetails: createEmptyTechDetails(),
+            pages: [
+              { pageId: MAIN_ENTRY_PAGE_ID, title: 'Overview', content: '<p></p>', order: 0 },
+              { pageId: 'setup', title: 'Setup', content: '<p></p>', order: 1 },
+              { pageId: 'troubleshooting', title: 'Troubleshooting', content: '<p></p>', order: 2 },
+              { pageId: 'project-usage', title: 'Project Usage', content: '<p></p>', order: 3 },
+              { pageId: 'commands', title: 'Commands', content: '<p></p>', order: 4 },
+            ],
+          } : {
             category: selectedCategory,
             tagsText: tags.join(', '),
             origin: 'manual',
             opportunityDetails: {},
-          }));
+          };
+          localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify(nextPreload));
           window.location.hash = `#/edit/new-${Date.now()}`;
           return;
         }
         if (saveAction === 'save-start-application') {
           localStorage.setItem(DRAFT_PRELOAD_KEY, JSON.stringify({
-            title: `Application - ${form.title.trim()}`,
+            title: `Application - ${saveTitle}`,
             category: 'Applications/Application Documents',
             tagsText: mergeTags(['Application'], tags).join(', '),
-            sourceUrl: form.sourceUrl.trim(),
-            summary: `Application workspace for ${form.title.trim()}.`,
-            html: `<p>Application workspace for <a href="#/read/${pageId}">${form.title.trim()}</a>.</p>`,
+            sourceUrl: saveSourceUrl,
+            summary: `Application workspace for ${saveTitle}.`,
+            html: `<p>Application workspace for <a href="#/read/${pageId}">${saveTitle}</a>.</p>`,
             origin: 'manual',
             opportunityDetails: { relatedOpportunityId: pageId, institution: opportunityDetails.institution || '' },
           }));
@@ -2094,7 +2282,6 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
       setSaving(false);
     }
   }
-
   async function toggleArchiveCurrent() {
     if (isNew || !existing) return;
     setSaving(true);
@@ -2452,6 +2639,202 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
     );
   }
 
+  function renderTechnologyDetails() {
+    if (!isTechnologyDraft) return null;
+    const details = normalizeTechDetails(techDetails);
+    const usageRows = details.projects.length ? details.projects : [{ ...EMPTY_TECH_USAGE }];
+    const troubleshootingRows = details.troubleshooting.length ? details.troubleshooting : [];
+    return (
+      <section className="tech-editor-panel">
+        <div className="compact-section-head">
+          <div>
+            <p className="eyebrow">TECH REFERENCE</p>
+            <h3>Technology Reference</h3>
+          </div>
+        </div>
+
+        <section className="tech-form-section">
+          <h4>1. Technology</h4>
+          <div className="manual-field-grid">
+            <label className="field-label">Technology name
+              <input value={details.canonicalName || form.title} onChange={(event) => updateTechnologyName(event.target.value)} placeholder="Cloudflare" />
+            </label>
+            <label className="field-label">Also known as / aliases and common misspellings
+              <input value={listToText(details.aliases)} onChange={(event) => updateTechList('aliases', event.target.value)} placeholder="cloudfare, CF" />
+            </label>
+            <label className="field-label">Category
+              <input list="tech-category-options" value={details.technologyCategory} onChange={(event) => updateTechCategory(event.target.value)} placeholder="Domain and DNS" />
+            </label>
+            <label className="field-label">Official website
+              <input type="url" value={details.officialUrl} onChange={(event) => { updateTechDetail('officialUrl', event.target.value); update('sourceUrl', event.target.value); }} placeholder="https://..." />
+            </label>
+            <label className="field-label">Status
+              <select value={details.status} onChange={(event) => updateTechDetail('status', event.target.value)}>
+                {TECH_STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+              </select>
+            </label>
+            <label className="field-label">Last verified
+              <input type="date" value={details.lastVerifiedAt} onChange={(event) => updateTechDetail('lastVerifiedAt', event.target.value)} />
+            </label>
+          </div>
+          <datalist id="tech-category-options">
+            {TECH_REFERENCE_CATEGORIES.map((category) => <option key={category} value={category} />)}
+          </datalist>
+        </section>
+
+        <section className="tech-form-section">
+          <h4>2. What is it?</h4>
+          <label className="field-label">Short definition
+            <textarea rows="3" value={details.shortDefinition} onChange={(event) => { updateTechDetail('shortDefinition', event.target.value); if (!form.summary.trim()) update('summary', event.target.value); }} />
+          </label>
+          <label className="field-label">What the technology does
+            <textarea rows="3" value={details.mainPurpose} onChange={(event) => updateTechDetail('mainPurpose', event.target.value)} />
+          </label>
+          <label className="field-label">Important concepts
+            <textarea rows="3" value={details.importantConcepts} onChange={(event) => updateTechDetail('importantConcepts', event.target.value)} />
+          </label>
+        </section>
+
+        <section className="tech-form-section">
+          <h4>3. Why I use it</h4>
+          <label className="field-label">Why it was selected
+            <textarea rows="3" value={details.whyUsed} onChange={(event) => updateTechDetail('whyUsed', event.target.value)} />
+          </label>
+          <label className="field-label">What problem it solves
+            <textarea rows="3" value={details.problemSolved} onChange={(event) => updateTechDetail('problemSolved', event.target.value)} />
+          </label>
+          <label className="field-label">Advantages
+            <textarea rows="3" value={details.advantages} onChange={(event) => updateTechDetail('advantages', event.target.value)} />
+          </label>
+          <div className="manual-field-grid">
+            <label className="field-label full-span">Limitations
+              <textarea rows="3" value={details.limitations} onChange={(event) => updateTechDetail('limitations', event.target.value)} />
+            </label>
+            <label className="field-label full-span">Alternatives considered
+              <textarea rows="3" value={details.alternatives} onChange={(event) => updateTechDetail('alternatives', event.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <section className="tech-form-section">
+          <div className="compact-section-head">
+            <h4>4. Where I use it</h4>
+            <button type="button" className="button secondary" onClick={addTechnologyUsage}>Add another usage</button>
+          </div>
+          <div className="tech-repeatable-list">
+            {usageRows.map((usage, index) => (
+              <article key={`usage-${index}`} className="tech-repeatable-card">
+                <div className="manual-field-grid">
+                  <label className="field-label">Project or website
+                    <input value={usage.projectName || ''} onChange={(event) => updateTechnologyUsage(index, 'projectName', event.target.value)} placeholder="gaitai.in" />
+                  </label>
+                  <label className="field-label">Project URL
+                    <input type="url" value={usage.projectUrl || ''} onChange={(event) => updateTechnologyUsage(index, 'projectUrl', event.target.value)} placeholder="https://..." />
+                  </label>
+                  <label className="field-label full-span">Purpose
+                    <textarea rows="2" value={usage.purpose || ''} onChange={(event) => updateTechnologyUsage(index, 'purpose', event.target.value)} placeholder="DNS management" />
+                  </label>
+                  <label className="field-label">Services used
+                    <input value={listToText(usage.servicesUsed)} onChange={(event) => updateTechnologyUsage(index, 'servicesUsed', event.target.value)} placeholder="DNS, Email Routing, SSL" />
+                  </label>
+                  <label className="field-label">Environment
+                    <input value={usage.environment || ''} onChange={(event) => updateTechnologyUsage(index, 'environment', event.target.value)} placeholder="Production, staging, local" />
+                  </label>
+                  <label className="field-label">Date added
+                    <input type="date" value={usage.dateAdded || ''} onChange={(event) => updateTechnologyUsage(index, 'dateAdded', event.target.value)} />
+                  </label>
+                  <label className="field-label full-span">Notes
+                    <textarea rows="2" value={usage.notes || ''} onChange={(event) => updateTechnologyUsage(index, 'notes', event.target.value)} />
+                  </label>
+                </div>
+                {details.projects.length > 1 ? <button type="button" className="text-link danger-link" onClick={() => removeTechnologyUsage(index)}>Remove usage</button> : null}
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="tech-form-section">
+          <h4>5. Setup and configuration</h4>
+          <p className="warning-note">Do not store passwords, API secrets, private keys, recovery codes or authentication tokens in plain text.</p>
+          <label className="field-label">Setup steps
+            <textarea rows="4" value={details.setupNotes || details.setupSteps} onChange={(event) => { updateTechDetail('setupNotes', event.target.value); updateTechDetail('setupSteps', event.target.value); }} />
+          </label>
+          <label className="field-label">DNS/configuration values
+            <textarea rows="4" value={details.configurationNotes} onChange={(event) => updateTechDetail('configurationNotes', event.target.value)} />
+          </label>
+          <label className="field-label">Commands
+            <textarea rows="4" value={details.commonCommands} onChange={(event) => updateTechDetail('commonCommands', event.target.value)} />
+          </label>
+          <label className="field-label">Code snippets
+            <textarea rows="4" value={details.codeSnippets} onChange={(event) => updateTechDetail('codeSnippets', event.target.value)} />
+          </label>
+          <label className="field-label">Environment variables
+            <textarea rows="3" value={details.environmentVariables} onChange={(event) => updateTechDetail('environmentVariables', event.target.value)} placeholder="Names only, not secret values" />
+          </label>
+          <label className="field-label">Useful links
+            <textarea rows="3" value={details.usefulLinks} onChange={(event) => updateTechDetail('usefulLinks', event.target.value)} />
+          </label>
+        </section>
+
+        <section className="tech-form-section">
+          <div className="compact-section-head">
+            <h4>6. Problems and solutions</h4>
+            <button type="button" className="button secondary" onClick={addTechTroubleshooting}>Add problem/solution</button>
+          </div>
+          <label className="field-label">General issues and solutions
+            <textarea rows="3" value={details.issuesAndSolutions} onChange={(event) => updateTechDetail('issuesAndSolutions', event.target.value)} />
+          </label>
+          <div className="tech-repeatable-list">
+            {troubleshootingRows.map((item, index) => (
+              <article key={`problem-${index}`} className="tech-repeatable-card">
+                <div className="manual-field-grid">
+                  <label className="field-label">Problem
+                    <input value={item.problem || ''} onChange={(event) => updateTechTroubleshooting(index, 'problem', event.target.value)} />
+                  </label>
+                  <label className="field-label">Related project
+                    <input value={item.relatedProject || ''} onChange={(event) => updateTechTroubleshooting(index, 'relatedProject', event.target.value)} />
+                  </label>
+                  <label className="field-label full-span">Symptoms
+                    <textarea rows="2" value={item.symptoms || ''} onChange={(event) => updateTechTroubleshooting(index, 'symptoms', event.target.value)} />
+                  </label>
+                  <label className="field-label full-span">Cause
+                    <textarea rows="2" value={item.cause || ''} onChange={(event) => updateTechTroubleshooting(index, 'cause', event.target.value)} />
+                  </label>
+                  <label className="field-label full-span">Solution
+                    <textarea rows="3" value={item.solution || ''} onChange={(event) => updateTechTroubleshooting(index, 'solution', event.target.value)} />
+                  </label>
+                  <label className="field-label">Date solved
+                    <input type="date" value={item.dateSolved || ''} onChange={(event) => updateTechTroubleshooting(index, 'dateSolved', event.target.value)} />
+                  </label>
+                </div>
+                <button type="button" className="text-link danger-link" onClick={() => removeTechTroubleshooting(index)}>Remove problem</button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="tech-form-section">
+          <h4>7. Related knowledge</h4>
+          <label className="field-label">Related technologies
+            <input value={listToText(details.relatedTechnologies)} onChange={(event) => updateTechList('relatedTechnologies', event.target.value)} placeholder="Firebase, GitHub Pages" />
+          </label>
+          <label className="field-label">Use cases
+            <input value={listToText(details.useCases)} onChange={(event) => updateTechList('useCases', event.target.value)} placeholder="custom domain, email routing" />
+          </label>
+          <label className="field-label">Related vault pages
+            <textarea rows="2" value={details.relatedPages} onChange={(event) => updateTechDetail('relatedPages', event.target.value)} placeholder="[[Exact Page Title]]" />
+          </label>
+          <label className="field-label">References
+            <textarea rows="3" value={details.references} onChange={(event) => updateTechDetail('references', event.target.value)} />
+          </label>
+          <label className="field-label">Personal notes
+            <textarea rows="3" value={details.personalNotes} onChange={(event) => updateTechDetail('personalNotes', event.target.value)} />
+          </label>
+        </section>
+      </section>
+    );
+  }
+
   function renderOpportunityDetails() {
     const template = categoryEntryType(form.category);
     const fields = [...new Set([...(template.visibleFields || []), ...Object.keys(opportunityDetails).filter((key) => opportunityDetails[key])])]
@@ -2621,6 +3004,8 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
             Entry title
             <input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="Give this entry a clear title" required />
           </label>
+
+          {renderTechnologyDetails()}
 
           <section className="entry-page-manager" aria-label="Entry pages">
             <div className="entry-page-manager-head">
@@ -2846,7 +3231,7 @@ export default function EditorPage({ routeId, pages, pagesLoaded }) {
 
           <div className="save-action-row">
             <button className="button primary full" name="saveAction" value="save" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
-            <button className="button secondary full" name="saveAction" value="save-start-application" disabled={saving}>Save and Start Application</button>
+            {!isTechnologyDraft ? <button className="button secondary full" name="saveAction" value="save-start-application" disabled={saving}>Save and Start Application</button> : null}
             <button className="button secondary full" name="saveAction" value="save-add-another" disabled={saving}>Save and Add Another</button>
             <button type="button" className="button secondary full" disabled={saving} onClick={() => { if (!hasLocalChanges || window.confirm('Discard unsaved changes?')) window.location.hash = '#/'; }}>Cancel</button>
             {message ? <div className="save-error-panel" role="alert">{message}</div> : null}

@@ -25,6 +25,7 @@ import {
   Search,
   Share2,
   Sun,
+  Wrench,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import NewEntryMenu from './NewEntryMenu';
@@ -33,6 +34,7 @@ import ImportFromLinkModal from './ImportFromLinkModal';
 const NAV = [
   { href: '#/', label: 'Dashboard', icon: Home, group: 'Library' },
   { href: '#/my-entries', label: 'My Entries', icon: NotebookPen, group: 'Library' },
+  { href: '#/tech-reference', label: 'Tech Reference', icon: Wrench, group: 'Library' },
   { href: '#/diary', label: 'Diary', icon: NotebookPen, group: 'Library' },
   { href: '#/shared-inbox', label: 'Shared Inbox', icon: Inbox, group: 'Library' },
   { href: '#/shareable', label: 'Shareable Entries', icon: Share2, group: 'Library' },
@@ -68,6 +70,7 @@ function routeTitle(path) {
   return ({
     '': 'Dashboard',
     'my-entries': 'My Entries',
+    'tech-reference': 'Tech Reference',
     notes: 'All Notes',
     calendar: 'Calendar',
     'shared-inbox': 'Shared Inbox',

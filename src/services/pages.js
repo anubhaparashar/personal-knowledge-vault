@@ -44,6 +44,20 @@ function buildEntryPagesPayload(entry, pages, now = new Date().toISOString()) {
   const mainPage = getMainPage({ ...entry, pages: nextPages });
   const plainText = htmlToText(entryPagesToHtml(nextPages));
   return {
+    title: entry.title || '',
+    category: entry.category || '',
+    tags: entry.tags || [],
+    sourceUrl: entry.sourceUrl || '',
+    sourceDomain: entry.sourceDomain || '',
+    sourceMetadata: entry.sourceMetadata || null,
+    summary: entry.summary || '',
+    origin: entry.origin || entry.createdOrigin || 'manual',
+    createdOrigin: entry.createdOrigin || entry.origin || 'manual',
+    sourceType: entry.sourceType || (entry.createdByUser === false ? 'discovery' : 'manual'),
+    createdByUser: typeof entry.createdByUser === 'boolean' ? entry.createdByUser : true,
+    entryType: entry.entryType || null,
+    techDetails: entry.techDetails || null,
+    opportunityDetails: entry.opportunityDetails || {},
     pages: nextPages,
     html: mainPage?.content || '<p></p>',
     content: mainPage?.content || '<p></p>',
@@ -51,7 +65,6 @@ function buildEntryPagesPayload(entry, pages, now = new Date().toISOString()) {
     wikiLinks: extractWikiLinks(plainText),
   };
 }
-
 function hasFullPageShape(data = {}) {
   return ['title', 'category', 'html', 'summary', 'plainText', 'tags', 'sourceUrl', 'origin'].some((field) => Object.prototype.hasOwnProperty.call(data, field));
 }

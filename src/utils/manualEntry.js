@@ -1,3 +1,5 @@
+import { createEmptyTechDetails, MAIN_ENTRY_PAGE_ID, TECHNOLOGY_ENTRY_TYPE } from './pageModel';
+
 export const PRELOAD_KEY = 'kv-editor-preload';
 
 export const MANUAL_ENTRY_TYPES = [
@@ -134,6 +136,26 @@ export const MANUAL_ENTRY_TYPES = [
     dateTypes: ['Opening date', 'Proposal deadline', 'Notification date', 'Expected start date', 'Custom date'],
   },
   {
+    id: 'technology',
+    label: 'Add Technology',
+    shortLabel: '+ Add Technology',
+    category: 'Tech Reference',
+    title: '',
+    tags: ['Technology Reference'],
+    visibleFields: [],
+    dateTypes: ['Custom date'],
+    allowNoDeadline: true,
+    entryType: TECHNOLOGY_ENTRY_TYPE,
+    techDetails: createEmptyTechDetails(),
+    pages: [
+      { pageId: MAIN_ENTRY_PAGE_ID, title: 'Overview', content: '<p></p>', order: 0 },
+      { pageId: 'setup', title: 'Setup', content: '<p></p>', order: 1 },
+      { pageId: 'troubleshooting', title: 'Troubleshooting', content: '<p></p>', order: 2 },
+      { pageId: 'project-usage', title: 'Project Usage', content: '<p></p>', order: 3 },
+      { pageId: 'commands', title: 'Commands', content: '<p></p>', order: 4 },
+    ],
+  },
+  {
     id: 'custom-type',
     label: 'Add Custom Type',
     shortLabel: '+ Add Custom Type',
@@ -204,6 +226,7 @@ export const FOCUS_ENTRY_TYPE = {
   proposals: 'project-proposal',
   diary: 'diary',
   'general-notes': 'general-note',
+  'tech-reference': 'technology',
 };
 
 export function getEntryType(id) {
@@ -227,6 +250,7 @@ export function categoryEntryType(category = '') {
   if (value.includes('paper') || value.includes('literature')) return getEntryType('research-paper');
   if (value.includes('application')) return getEntryType('application');
   if (value.includes('diary')) return getEntryType('diary');
+  if (value.includes('tech reference') || value.includes('technology')) return getEntryType('technology');
   return getEntryType('general-note');
 }
 
@@ -249,6 +273,9 @@ export function buildManualEntryPreload(entryTypeId, overrides = {}) {
     visibleFields: entryType.visibleFields || [],
     suggestedDateTypes: entryType.dateTypes || [],
     opportunityDetails: {},
+    ...(entryType.entryType ? { entryType: entryType.entryType } : {}),
+    ...(entryType.techDetails ? { techDetails: createEmptyTechDetails() } : {}),
+    ...(entryType.pages ? { pages: entryType.pages } : {}),
     ...overrides,
   };
 }

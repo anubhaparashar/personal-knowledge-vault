@@ -2903,3 +2903,150 @@ a { color: inherit; }
     display: none !important;
   }
 }
+
+/* Tech Reference */
+.tech-reference-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(5, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.tech-search-control { min-width: 0; }
+.tech-reference-grid { align-items: stretch; }
+.tech-reference-card { min-height: 0; }
+.tech-reference-card h3 { overflow-wrap: anywhere; }
+.tech-card-facts,
+.tech-reader-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.tech-card-facts div,
+.tech-reader-facts div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--slate-200, var(--line));
+}
+.tech-card-facts dt,
+.tech-reader-facts dt {
+  color: var(--slate-500, var(--muted));
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.tech-card-facts dd,
+.tech-reader-facts dd {
+  margin: 0;
+  color: var(--slate-800, var(--ink));
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.search-match-snippet {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(36, 87, 134, 0.18);
+  border-radius: 10px;
+  background: rgba(36, 87, 134, 0.06);
+}
+.search-match-snippet span {
+  color: var(--navy-700, var(--navy-2));
+  font-size: 12px;
+  font-weight: 900;
+}
+.search-match-snippet p { margin: 0; color: var(--slate-700, var(--ink)); font-size: 13px; line-height: 1.45; }
+.search-match-snippet mark { padding: 0 2px; border-radius: 4px; background: rgba(214, 157, 61, 0.34); color: inherit; }
+
+.tech-editor-panel {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 18px;
+  border: 1px solid var(--slate-200, var(--line));
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm, 0 10px 28px rgba(23,54,93,.05));
+}
+.tech-editor-panel h3,
+.tech-editor-panel h4 { margin: 0; }
+.tech-form-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--slate-200, var(--line));
+  border-radius: 12px;
+  background: var(--slate-100, var(--surface-2));
+}
+.tech-form-section > h4 { color: var(--slate-950, var(--ink)); font-size: 16px; }
+.tech-repeatable-list { display: grid; gap: 12px; }
+.tech-repeatable-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--slate-200, var(--line));
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.tech-reader-layout { display: grid; gap: 0; }
+.tech-reader-section { max-width: 980px; }
+.tech-reader-section p { color: var(--slate-700, var(--ink)); line-height: 1.65; }
+.tech-reader-overview { display: grid; gap: 14px; }
+.tech-reader-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.tech-reader-title-row h3 { margin: 0; overflow-wrap: anywhere; }
+.tech-reader-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.tech-reader-mini-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--slate-200, var(--line));
+  border-radius: 12px;
+  background: var(--slate-100, var(--surface-2));
+}
+.tech-reader-mini-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tech-reader-mini-card strong { overflow-wrap: anywhere; }
+.tech-reader-mini-card a,
+.tech-reader-related-pages a { color: var(--navy-700, var(--navy-2)); font-weight: 800; }
+.tech-reader-code {
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 14px;
+  border-radius: 10px;
+  background: #101923;
+  color: #e8eef5;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.tech-reader-related-pages { line-height: 1.65; }
+
+@media (max-width: 1200px) {
+  .tech-reference-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tech-reference-toolbar .search-control { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .tech-reference-toolbar,
+  .tech-reader-card-grid { grid-template-columns: 1fr; }
+  .tech-reader-title-row,
+  .tech-reader-mini-card-head { flex-direction: column; align-items: flex-start; }
+}
+@media print {
+  .tech-reference-toolbar,
+  .tech-editor-panel { display: none !important; }
+}

@@ -20,7 +20,7 @@ import { daysUntil, deadlineStatus } from '../utils/intelligence';
 import { downloadIcs, googleCalendarUrl } from '../utils/calendar';
 import { formatDetectedDate } from '../utils/dates';
 import { formatDiscoveryTimestamp } from '../services/discovery';
-import { getEntryPages, isArchivedPage, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, originLabel, originTone, savedDiscoveryPatch } from '../utils/pageModel';
+import { entryTypeForPage, getEntryPages, isArchivedPage, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, normalizeStringList, normalizeTechDetails, originLabel, originTone, savedDiscoveryPatch, TECHNOLOGY_ENTRY_TYPE, technologyStatusLabel, technologyStatusTone } from '../utils/pageModel';
 
 function deadlineLabel(deadline) {
   const status = deadlineStatus(deadline);
@@ -39,6 +39,38 @@ function dateSourceLabel(deadline) {
   if (deadline.source === 'manual' || deadline.manuallyEdited) return 'Added manually';
   if (deadline.detectedAutomatically || deadline.source === 'automatic') return 'Detected automatically';
   return 'Saved date';
+}
+
+function hasReaderValue(value) {
+  if (Array.isArray(value)) return value.some(hasReaderValue);
+  if (value && typeof value === 'object') return Object.values(value).some(hasReaderValue);
+  return String(value || '').trim().length > 0;
+}
+
+function textParagraphs(value = '') {
+  return String(value || '').split(/\n{1,}/).map((line) => line.trim()).filter(Boolean);
+}
+
+function ReaderText({ value, code = false }) {
+  const lines = textParagraphs(value);
+  if (!lines.length) return null;
+  if (code) return <pre className="tech-reader-code">{lines.join('\n')}</pre>;
+  return <>{lines.map((line, index) => <p key={`${index}-${line.slice(0, 18)}`}>{line}</p>)}</>;
+}
+
+function DetailList({ items }) {
+  const visible = items.filter(([, value]) => hasReaderValue(value));
+  if (!visible.length) return null;
+  return (
+    <dl className="tech-reader-facts">
+      {visible.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{Array.isArray(value) ? value.join(', ') : value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
@@ -60,6 +92,8 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
     () => (selectedEntryPage ? linkifyWikiHtml(selectedEntryPage.content || '', pages) : ''),
     [pages, selectedEntryPage],
   );
+  const isTechnologyContent = Boolean(content && entryTypeForPage(content) === TECHNOLOGY_ENTRY_TYPE);
+  const techDetails = useMemo(() => normalizeTechDetails(content?.techDetails || {}), [content?.techDetails]);
 
   const backlinks = useMemo(() => {
     if (!content?.title) return [];
@@ -189,6 +223,147 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
     );
   }
 
+  function renderTechnologyReference() {
+    if (!isTechnologyContent) return null;
+    const aliases = normalizeStringList(techDetails.aliases);
+    const useCases = normalizeStringList(techDetails.useCases);
+    const relatedTechnologies = normalizeStringList(techDetails.relatedTechnologies);
+    const definitionValues = [techDetails.shortDefinition, techDetails.mainPurpose, techDetails.importantConcepts];
+    const whyValues = [techDetails.whyUsed, techDetails.problemSolved, techDetails.advantages];
+    const setupValues = [techDetails.setupNotes || techDetails.setupSteps, techDetails.configurationNotes, techDetails.codeSnippets, techDetails.environmentVariables, techDetails.usefulLinks];
+    const problemValues = [techDetails.issuesAndSolutions, techDetails.troubleshooting];
+    const relatedPagesHtml = techDetails.relatedPages
+      ? linkifyWikiHtml(String(techDetails.relatedPages).replace(/\n/g, '<br>'), pages)
+      : '';
+
+    return (
+      <div className="tech-reader-layout">
+        <section className="reader-section tech-reader-section tech-reader-overview">
+          <div className="tech-reader-title-row">
+            <div>
+              <p className="eyebrow">TECHNOLOGY</p>
+              <h3>{techDetails.canonicalName || content.title}</h3>
+            </div>
+            <span className={`badge badge-${technologyStatusTone(techDetails.status)}`}>{technologyStatusLabel(techDetails.status)}</span>
+          </div>
+          <DetailList items={[
+            ['Category', techDetails.technologyCategory],
+            ['Aliases', aliases],
+            ['Official website', techDetails.officialUrl ? <a href={techDetails.officialUrl} target="_blank" rel="noopener noreferrer">{techDetails.officialUrl}</a> : ''],
+            ['Last verified', techDetails.lastVerifiedAt ? formatDate(techDetails.lastVerifiedAt) : ''],
+          ]} />
+        </section>
+
+        {hasReaderValue(definitionValues) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>What is it?</h3>
+            <ReaderText value={techDetails.shortDefinition} />
+            <ReaderText value={techDetails.mainPurpose} />
+            <ReaderText value={techDetails.importantConcepts} />
+          </section>
+        ) : null}
+
+        {hasReaderValue(whyValues) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Why I use it</h3>
+            <ReaderText value={techDetails.whyUsed} />
+            <ReaderText value={techDetails.problemSolved} />
+            <ReaderText value={techDetails.advantages} />
+          </section>
+        ) : null}
+
+        {techDetails.projects.length ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Projects and usages</h3>
+            <div className="tech-reader-card-grid">
+              {techDetails.projects.map((usage, index) => (
+                <article key={`${usage.projectName || 'usage'}-${index}`} className="tech-reader-mini-card">
+                  <div className="tech-reader-mini-card-head">
+                    <strong>{usage.projectName || `Usage ${index + 1}`}</strong>
+                    {usage.projectUrl ? <a href={usage.projectUrl} target="_blank" rel="noopener noreferrer">Open</a> : null}
+                  </div>
+                  <ReaderText value={usage.purpose} />
+                  {usage.servicesUsed?.length ? <div className="tag-row">{usage.servicesUsed.map((service) => <span key={service}>{service}</span>)}</div> : null}
+                  <DetailList items={[
+                    ['Environment', usage.environment],
+                    ['Date added', usage.dateAdded ? formatDate(usage.dateAdded) : ''],
+                    ['Notes', usage.notes],
+                  ]} />
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {hasReaderValue(setupValues) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Setup and configuration</h3>
+            <ReaderText value={techDetails.setupNotes || techDetails.setupSteps} />
+            <ReaderText value={techDetails.configurationNotes} code />
+            <ReaderText value={techDetails.codeSnippets} code />
+            <ReaderText value={techDetails.environmentVariables} code />
+            <ReaderText value={techDetails.usefulLinks} />
+          </section>
+        ) : null}
+
+        {hasReaderValue(techDetails.commonCommands) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Commands</h3>
+            <ReaderText value={techDetails.commonCommands} code />
+          </section>
+        ) : null}
+
+        {hasReaderValue(problemValues) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Problems and solutions</h3>
+            <ReaderText value={techDetails.issuesAndSolutions} />
+            {techDetails.troubleshooting.length ? (
+              <div className="tech-reader-card-grid">
+                {techDetails.troubleshooting.map((item, index) => (
+                  <article key={`${item.problem || 'problem'}-${index}`} className="tech-reader-mini-card">
+                    <strong>{item.problem || `Problem ${index + 1}`}</strong>
+                    <DetailList items={[
+                      ['Symptoms', item.symptoms],
+                      ['Cause', item.cause],
+                      ['Solution', item.solution],
+                      ['Date solved', item.dateSolved ? formatDate(item.dateSolved) : ''],
+                      ['Related project', item.relatedProject],
+                    ]} />
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {hasReaderValue([techDetails.alternatives, techDetails.limitations]) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Alternatives and limitations</h3>
+            <ReaderText value={techDetails.alternatives} />
+            <ReaderText value={techDetails.limitations} />
+          </section>
+        ) : null}
+
+        {hasReaderValue(techDetails.securityNotes) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Security notes</h3>
+            <ReaderText value={techDetails.securityNotes} />
+          </section>
+        ) : null}
+
+        {hasReaderValue([relatedTechnologies, useCases, techDetails.relatedPages, techDetails.references, techDetails.personalNotes]) ? (
+          <section className="reader-section tech-reader-section">
+            <h3>Related technologies and pages</h3>
+            {relatedTechnologies.length ? <div className="tag-row">{relatedTechnologies.map((item) => <span key={item}>{item}</span>)}</div> : null}
+            {useCases.length ? <DetailList items={[["Use cases", useCases]]} /> : null}
+            {relatedPagesHtml ? <div className="tech-reader-related-pages" dangerouslySetInnerHTML={{ __html: sanitizeHtml(relatedPagesHtml) }} /> : null}
+            <ReaderText value={techDetails.references} />
+            <ReaderText value={techDetails.personalNotes} />
+          </section>
+        ) : null}
+      </div>
+    );
+  }
   if (!pagesLoaded) {
     return <AppShell title="Reader"><div className="empty-state">Loading page...</div></AppShell>;
   }
@@ -207,6 +382,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             <div className="tag-row">
               <span>{content.category || 'Uncategorised'}</span>
               <span className={`origin-badge badge-${originTone(normalizedPage?.origin || content.origin)}`}>{originLabel(normalizedPage?.origin || content.origin)}</span>
+              {isTechnologyContent ? <span className={`badge badge-${technologyStatusTone(techDetails.status)}`}>{technologyStatusLabel(techDetails.status)}</span> : null}
               {isArchivedPage(normalizedPage) ? <span>Archived</span> : null}
               {isShareEnabledPage(normalizedPage) ? <span>Shareable</span> : null}
               {page.secure ? <span>Decrypted for this session</span> : null}
@@ -249,6 +425,8 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
             </dl>
           )}
         </section>
+
+        {renderTechnologyReference()}
 
         {entryPages.length ? (
           <section className="reader-page-nav" aria-label="Entry page navigation">
@@ -295,7 +473,7 @@ export default function ReaderPage({ pageId, pages, pdfs = [], pagesLoaded }) {
 
         {!page.secure && page.attachments?.length ? (
           <section className="reader-section">
-            <h3>Attachments</h3>
+            <h3>{isTechnologyContent ? 'References and attachments' : 'Attachments'}</h3>
             <DriveAttachmentList
               items={page.attachments}
               onReadPdf={openPdfInWebsite}

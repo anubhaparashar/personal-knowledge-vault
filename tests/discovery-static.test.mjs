@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extractImportantDates, formatDetectedDate, selectNextImportantDate } from '../src/utils/dates.js';
 import { detectExternalUrls } from '../src/utils/sourceLinks.js';
-import { isArchivedPage, isDiaryEntry, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, pageMatchesSection, savedDiscoveryPatch, sourceTypeForPage } from '../src/utils/pageModel.js';
+import { buildPageSearchDocument, entryTypeForPage, isArchivedPage, isDiaryEntry, isDiscoveryRecord, isMyEntry, isShareEnabledPage, normalizePage, pageMatchesSection, savedDiscoveryPatch, searchMatchForPage, sourceTypeForPage, TECHNOLOGY_ENTRY_TYPE } from '../src/utils/pageModel.js';
 import { generateSmartMetadata } from '../src/utils/intelligence.js';
 import {
   buildLinkedInImportResult,
@@ -77,6 +77,7 @@ run('Manual entry menu includes all requested entry types and URL/file actions',
     'Add Research Job',
     'Add Research Paper',
     'Add Paper Idea',
+    'Add Technology',
     'Add Application',
     'Add General Note',
     'Add Diary Entry',
@@ -139,6 +140,52 @@ run('Origin model separates diary, my entries, discoveries and archives', () => 
   assert.equal(pageMatchesSection(shareableManual, 'shareable'), true);
 });
 
+run('Technology Reference entries stay manual and searchable across tech fields', () => {
+  const cloudflare = normalizePage({
+    id: 'tech-cloudflare',
+    title: 'Cloudflare',
+    category: 'Tech Reference/Domain and DNS',
+    origin: 'manual',
+    createdByUser: true,
+    entryType: TECHNOLOGY_ENTRY_TYPE,
+    summary: 'A platform used for DNS, website delivery, security and related domain services.',
+    tags: ['cloudflare', 'dns', 'domain', 'email-routing', 'ssl', 'github-pages'],
+    techDetails: {
+      canonicalName: 'Cloudflare',
+      aliases: ['cloudfare', 'CF'],
+      technologyCategory: 'Domain and DNS',
+      shortDefinition: 'A platform used for DNS, website delivery, security and related domain services.',
+      whyUsed: 'To manage domain DNS, connect custom domains, handle SSL and configure email routing.',
+      mainPurpose: 'DNS management, website security, SSL, CDN, and domain email routing.',
+      projects: [
+        { projectName: 'gaitai.in', purpose: 'DNS management', servicesUsed: ['DNS'] },
+        { projectName: 'GitHub Pages', purpose: 'custom domain connection', servicesUsed: ['DNS records'] },
+        { projectName: 'Domain email', purpose: 'Cloudflare Email Routing', servicesUsed: ['Email Routing'] },
+      ],
+      useCases: ['custom domain', 'domain email', 'email routing', 'SSL', 'GitHub Pages'],
+      relatedPages: '[[GitHub Pages]]',
+    },
+    pages: [
+      { pageId: 'main', title: 'Overview', content: '<p>Cloudflare manages DNS for gaitai.in and SSL for custom domains.</p>', order: 0 },
+      { pageId: 'setup', title: 'Setup', content: '<p>Email routing and GitHub Pages DNS records are configured here.</p>', order: 1 },
+    ],
+  });
+  const searchDocument = buildPageSearchDocument(cloudflare);
+
+  assert.equal(entryTypeForPage(cloudflare), TECHNOLOGY_ENTRY_TYPE);
+  assert.equal(isMyEntry(cloudflare), true);
+  assert.equal(isDiscoveryRecord(cloudflare), false);
+  assert.equal(pageMatchesSection(cloudflare, 'tech-reference'), true);
+  assert.equal(cloudflare.searchText, searchDocument.text);
+  assert.ok(searchDocument.text.includes('cloudfare'));
+  assert.ok(searchDocument.text.includes('gaitai.in'));
+
+  ['Cloudflare', 'cloudfare', 'CF', 'DNS', 'gaitai.in', 'custom domain', 'domain email', 'email routing', 'SSL', 'GitHub Pages'].forEach((query) => {
+    const match = searchMatchForPage(cloudflare, query);
+    assert.equal(match.matched, true, `${query} should return the Cloudflare technology entry`);
+    assert.ok(match.fieldLabel, `${query} should report the matched field`);
+  });
+});
 run('Archive and public share surfaces are wired without exposing private pages', () => {
   const dashboard = read('src/pages/DashboardPage.jsx');
   const reader = read('src/pages/ReaderPage.jsx');
